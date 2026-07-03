@@ -1,0 +1,28 @@
+# PR·main 푸시마다 전체 테스트 실행 — "머지 = Streamlit Cloud 재배포"라서 머지 전 게이트가 중요하다.
+# 각 테스트 파일은 독립 프로세스로 실행 (bare-mode st.session_state가 전역이라 파일 간 격리 필수).
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  apptest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Run test suite
+        run: |
+          set -e
+          for f in tests/test_*.py; do
+            echo "===== $f"
+            python "$f"
+          done
