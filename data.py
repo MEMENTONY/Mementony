@@ -3,6 +3,7 @@ import hashlib
 import json
 import html
 import os
+import time
 import re
 import urllib.error
 import urllib.parse
@@ -1390,10 +1391,31 @@ def ledger_backup_signature():
     except Exception:
         return "", 0
 
+def gsheet_webapp_endpoint():
+    """Apps Script 웹앱 URL: 앱 내 설정값 우선, 없으면 Streamlit Secrets(gsheet_webapp_url).
+    Secrets에 넣어두면 재배포로 로컬 상태가 초기화돼도 부팅 복원이 가능하다."""
+    u = str(st.session_state.get("gsheet_webapp_url", "") or "").strip()
+    if u:
+        return u
+    try:
+        return str(st.secrets.get("gsheet_webapp_url", "") or "").strip()
+    except Exception:
+        return ""
+
+def gsheet_webapp_secret():
+    """웹앱 공유 토큰: 앱 내 설정값 우선, 없으면 Streamlit Secrets(gsheet_webapp_token)."""
+    tok = str(st.session_state.get("gsheet_webapp_token", "") or "").strip()
+    if tok:
+        return tok
+    try:
+        return str(st.secrets.get("gsheet_webapp_token", "") or "").strip()
+    except Exception:
+        return ""
+
 def backup_ledger_via_webapp(force=False):
     """Push the ledger to the user's own Google Sheet through their Apps Script web app URL
     (no service account / Google Cloud). POSTs {"rows":[...], "token":...}. Fail-soft."""
-    url = str(st.session_state.get("gsheet_webapp_url", "") or "").strip()
+    url = gsheet_webapp_endpoint()
     if not url:
         return {"ok": False, "error": "no_url", "written": 0}
     body, n = _ledger_rows_for_export()
@@ -1401,7 +1423,7 @@ def backup_ledger_via_webapp(force=False):
         return {"ok": False, "error": "empty_ledger", "written": 0}
     try:
         payload = {"rows": body}
-        token = str(st.session_state.get("gsheet_webapp_token", "") or "").strip()
+        token = gsheet_webapp_secret()
         if token:
             payload["token"] = token
         data = json.dumps(payload).encode("utf-8")
@@ -1428,12 +1450,12 @@ def restore_ledger_from_webapp():
     """양방향의 '시트→앱' 방향: Apps Script doGet으로 ledger 탭을 되읽어 편집 가능한 컬럼만 반영한다.
     반영 대상 — 카테고리 → trade_ledger(수동 표시로 보존됨), 감정(1-5)·추격(Y) → trade_emotions.
     행 매칭은 '키' 컬럼으로만 하고, 시트에서 지운 감정 기록은 앱에서 지우지 않는다(merge-only). Fail-soft."""
-    url = str(st.session_state.get("gsheet_webapp_url", "") or "").strip()
+    url = gsheet_webapp_endpoint()
     if not url:
         return {"ok": False, "error": "no_url", "rows": 0, "categories": 0, "tags": 0}
     try:
         params = {"action": "read"}
-        token = str(st.session_state.get("gsheet_webapp_token", "") or "").strip()
+        token = gsheet_webapp_secret()
         if token:
             params["token"] = token
         sep = "&" if "?" in url else "?"
@@ -1500,11 +1522,143 @@ def restore_ledger_from_webapp():
 
 def gsheet_active_method():
     """Which backup method is configured. Apps Script (webapp) is preferred when set."""
-    if str(st.session_state.get("gsheet_webapp_url", "") or "").strip():
+    if gsheet_webapp_endpoint():
         return "webapp"
     if gsheet_status()["ready"]:
         return "service_account"
     return ""
+
+# ---------------------------------------------------------------------------
+# 전체 상태 백업/복원 — Streamlit Cloud는 재배포·재부팅 때 로컬 파일(memento_state.json)이
+# 사라진다. 장부 외의 모든 기록(승/패 확정·감정 태그·복기 노트·현금 입력 등)을 시트의
+# 'state' 탭에 스냅샷으로 저장하고, 부팅 시 로컬이 비어 있으면 자동 복원한다. 전부 fail-soft.
+# ---------------------------------------------------------------------------
+STATE_SNAPSHOT_EXCLUDE = ("wallet_raw", "pnl_raw", "activity_raw")  # 재조회 가능한 raw 덤프 — 부피 절감
+
+def state_snapshot_json():
+    """복원용 전체 상태 스냅샷(JSON 문자열). local_state_payload에서 raw 덤프만 제외."""
+    try:
+        data = local_state_payload()
+        for k in STATE_SNAPSHOT_EXCLUDE:
+            data.pop(k, None)
+        data["_schema"] = 1
+        return json.dumps(data, ensure_ascii=False)
+    except Exception:
+        return ""
+
+def state_backup_signature():
+    """상태 스냅샷 지문(md5). 매 실행 바뀌는 _saved_at은 빼고 계산해 '실제 변경'만 감지."""
+    try:
+        data = local_state_payload()
+        for k in STATE_SNAPSHOT_EXCLUDE:
+            data.pop(k, None)
+        data.pop("_saved_at", None)
+        return hashlib.md5(json.dumps(data, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    except Exception:
+        return ""
+
+def backup_state_via_webapp():
+    """전체 상태 스냅샷을 웹앱 doPost({"state": ...})로 시트 'state' 탭에 저장. Fail-soft."""
+    url = gsheet_webapp_endpoint()
+    if not url:
+        return {"ok": False, "error": "no_url"}
+    snap = state_snapshot_json()
+    if not snap:
+        return {"ok": False, "error": "empty_state"}
+    try:
+        payload = {"state": snap, "saved_at": datetime.now(KST).isoformat(timespec="seconds")}
+        token = gsheet_webapp_secret()
+        if token:
+            payload["token"] = token
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data,
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            txt = resp.read().decode("utf-8", "ignore")
+        ok_resp = True
+        try:
+            ok_resp = bool(json.loads(txt).get("ok", True))
+        except Exception:
+            pass
+        if not ok_resp:
+            return {"ok": False, "error": f"webapp: {txt[:140]}"}
+        st.session_state["_gsheet_state_last_backup"] = payload["saved_at"]
+        return {"ok": True, "error": ""}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+def fetch_state_from_webapp():
+    """시트 'state' 탭의 스냅샷을 읽어 (dict, saved_at, error)로 돌려준다.
+    스냅샷이 아직 없으면 (None, "", "") — 오류가 아니다."""
+    url = gsheet_webapp_endpoint()
+    if not url:
+        return None, "", "no_url"
+    try:
+        params = {"action": "read_state"}
+        token = gsheet_webapp_secret()
+        if token:
+            params["token"] = token
+        sep = "&" if "?" in url else "?"
+        req = urllib.request.Request(url + sep + urllib.parse.urlencode(params),
+                                     headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            j = json.loads(resp.read().decode("utf-8", "ignore"))
+        if not (isinstance(j, dict) and j.get("ok")):
+            return None, "", str((j or {}).get("error", "bad response"))[:140] if isinstance(j, dict) else "bad response"
+        raw = str(j.get("state", "") or "")
+        if not raw.strip():
+            return None, "", ""
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return None, "", "bad_snapshot"
+        return data, str(j.get("saved_at", "") or data.get("_saved_at", "") or ""), ""
+    except Exception as e:
+        return None, "", f"{type(e).__name__}: {e}"
+
+def restore_state_from_webapp():
+    """시트 스냅샷을 세션에 적용하고 로컬 파일을 재생성한다. PERSIST_KEYS에 있는 키만 적용.
+    호출한 쪽에서 '언제 복원할지'(부팅 시 로컬 비었을 때 / 수동 확인 후)를 결정한다. Fail-soft."""
+    data, saved_at, err = fetch_state_from_webapp()
+    if err:
+        return {"ok": False, "restored": 0, "saved_at": "", "error": err}
+    if data is None:
+        return {"ok": False, "restored": 0, "saved_at": "", "error": "no_snapshot"}
+    applied = 0
+    for k in PERSIST_KEYS:
+        if k in data:
+            st.session_state[k] = data[k]
+            applied += 1
+    save_local_state()  # 로컬 파일 재생성 (내부에서 status를 'saved'로 만들므로 그 뒤에 표시)
+    st.session_state["_local_state_status"] = "restored_from_sheet"
+    st.session_state["_local_state_saved_at"] = saved_at
+    return {"ok": True, "restored": applied, "saved_at": saved_at, "error": ""}
+
+def maybe_backup_state(min_interval_sec=120):
+    """자동 상태 백업: 내용이 실제로 바뀌었고 최소 간격이 지났을 때만 웹앱으로 백업.
+    같은 내용으로 실패했으면 내용이 바뀔 때까지 재시도하지 않는다. 결과 dict. Fail-soft."""
+    try:
+        if not gsheet_webapp_endpoint():
+            return {"ok": False, "skipped": "no_url"}
+        sig = state_backup_signature()
+        if not sig:
+            return {"ok": False, "skipped": "empty"}
+        if sig == str(st.session_state.get("_state_backup_sig", "")):
+            return {"ok": True, "skipped": "unchanged"}
+        if sig == str(st.session_state.get("_state_backup_fail_sig", "")):
+            return {"ok": False, "skipped": "failed_before"}
+        now = time.time()
+        if now - float(st.session_state.get("_state_backup_last_ts", 0) or 0) < max(min_interval_sec, 0):
+            return {"ok": True, "skipped": "throttled"}
+        r = backup_state_via_webapp()
+        st.session_state["_state_backup_last_ts"] = now
+        if r.get("ok"):
+            st.session_state["_state_backup_sig"] = sig
+            st.session_state.pop("_state_backup_fail_sig", None)
+        else:
+            st.session_state["_state_backup_fail_sig"] = sig
+        return r
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 def backup_ledger(force=False):
     """Single entry point: dispatch to whichever backup method is configured."""
@@ -1521,6 +1675,15 @@ __all__ = [
     'fetch_markets_by_token_ids',
     'ledger_backup_signature',
     'restore_ledger_from_webapp',
+    'gsheet_webapp_endpoint',
+    'gsheet_webapp_secret',
+    'STATE_SNAPSHOT_EXCLUDE',
+    'state_snapshot_json',
+    'state_backup_signature',
+    'backup_state_via_webapp',
+    'fetch_state_from_webapp',
+    'restore_state_from_webapp',
+    'maybe_backup_state',
     'backup_ledger',
     'backup_ledger_via_webapp',
     'gsheet_active_method',

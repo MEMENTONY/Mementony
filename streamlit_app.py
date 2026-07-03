@@ -875,6 +875,23 @@ for k, v in DEFAULTS.items():
 
 load_local_state()
 
+# 재배포/재부팅으로 로컬 상태 파일이 사라졌을 때 구글 시트 스냅샷에서 자동 복원.
+# Apps Script URL을 Streamlit Secrets(gsheet_webapp_url)에 넣어두면 URL도 재배포를 살아남는다.
+try:
+    if (st.session_state.get("_local_state_status") == "empty"
+            and not st.session_state.get("_state_restore_attempted")
+            and gsheet_webapp_endpoint()):
+        st.session_state._state_restore_attempted = True
+        _rs = restore_state_from_webapp()
+        if _rs.get("ok") and _rs.get("restored"):
+            try:
+                st.toast(t(f"구글 시트에서 상태 복원됨 · {_rs.get('saved_at', '')}",
+                           f"State restored from Google Sheets · {_rs.get('saved_at', '')}"))
+            except Exception:
+                pass
+except Exception:
+    pass
+
 if not isinstance(st.session_state.get("portfolio"), list):
     st.session_state.portfolio = []
 else:
@@ -2652,16 +2669,25 @@ with tab_set:
             r"""내 구글 계정·내 시트에 직접 저장하는 가장 쉬운 방법입니다.
 1. 브라우저에 `sheets.new` → 새 스프레드시트 생성(이름 아무거나).
 2. 상단 메뉴 **확장 프로그램 → Apps Script**.
-3. 기본 코드 지우고 아래를 붙여넣고 저장(💾) — doPost(백업)와 doGet(가져오기)이 모두 필요합니다:
+3. 기본 코드 지우고 아래 v3 코드를 붙여넣고 저장(💾) — 장부 백업/가져오기 + **전체 상태 스냅샷**까지 처리합니다:
 ```javascript
 var SECRET = "";  // (선택) 아래 '공유 토큰'과 같은 값. 비우면 검사 안 함.
 
-function doPost(e) {  // 앱 → 시트 (백업)
+function doPost(e) {  // 앱 → 시트 (장부 백업 + 전체 상태 스냅샷)
   try {
     var body = JSON.parse(e.postData.contents);
     if (SECRET && String(body.token || "") !== SECRET) return _json({ok:false,error:"bad token"});
-    var rows = body.rows || [];
     var ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (body.state !== undefined) {  // 전체 상태: JSON을 40,000자 청크로 'state' 탭에 저장
+      var st = ss.getSheetByName("state") || ss.insertSheet("state");
+      st.clearContents();
+      var s = String(body.state || "");
+      var out = [[String(body.saved_at || "")]];
+      for (var i = 0; i < s.length; i += 40000) out.push(["#" + s.substring(i, i + 40000)]);
+      st.getRange(1, 1, out.length, 1).setValues(out);
+      return _json({ok:true, chunks: out.length - 1});
+    }
+    var rows = body.rows || [];
     var sh = ss.getSheetByName("ledger") || ss.insertSheet("ledger");
     sh.clearContents();
     if (rows.length) sh.getRange(1,1,rows.length,rows[0].length).setValues(rows);
@@ -2669,11 +2695,20 @@ function doPost(e) {  // 앱 → 시트 (백업)
   } catch (err) { return _json({ok:false,error:String(err)}); }
 }
 
-function doGet(e) {  // 시트 → 앱 (가져오기)
+function doGet(e) {  // 시트 → 앱 (장부 가져오기 + 상태 복원)
   try {
     var p = (e && e.parameter) || {};
     if (SECRET && String(p.token || "") !== SECRET) return _json({ok:false,error:"bad token"});
-    var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("ledger");
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (String(p.action || "") === "read_state") {  // 전체 상태 스냅샷 읽기
+      var st = ss.getSheetByName("state");
+      if (!st) return _json({ok:true, state:"", saved_at:""});
+      var vals = st.getDataRange().getValues();
+      var parts = [];
+      for (var i = 1; i < vals.length; i++) parts.push(String(vals[i][0]).replace(/^#/, ""));
+      return _json({ok:true, state: parts.join(""), saved_at: vals.length ? String(vals[0][0]) : ""});
+    }
+    var sh = ss.getSheetByName("ledger");
     return _json({ok:true, rows: sh ? sh.getDataRange().getDisplayValues() : []});
   } catch (err) { return _json({ok:false,error:String(err)}); }
 }
@@ -2684,21 +2719,35 @@ function _json(obj) {
 ```
 4. **배포 → 새 배포 → 유형: 웹 앱**, 실행: **나**, 액세스: **모든 사용자** → 배포 → 구글 로그인 승인.
 5. 나오는 **웹 앱 URL**(.../exec)을 복사해 아래에 붙여넣기.
+6. **(강력 추천)** Streamlit Cloud → 앱 설정 → **Secrets**에 아래를 추가 — 재배포되어도 URL이 살아남아 부팅 자동 복원이 동작합니다:
+```toml
+gsheet_webapp_url = "https://script.google.com/macros/s/..../exec"
+# 토큰을 쓰면: gsheet_webapp_token = "SECRET과 같은 값"
+```
 * 보호하려면 코드의 SECRET과 아래 '공유 토큰'을 같은 값으로 두세요.
-* 이미 예전 코드(doPost만)로 배포했다면: 코드를 위 내용으로 교체 → **배포 관리 → 수정 → 새 버전** (URL은 그대로 유지됩니다).""",
+* 이미 예전 코드로 배포했다면: 코드를 위 v3로 교체 → **배포 관리 → 수정 → 새 버전** (URL은 그대로 유지됩니다).""",
             r"""The easiest way — writes to your own sheet with your own Google account.
 1. Go to `sheets.new` → create a spreadsheet.
 2. Menu **Extensions → Apps Script**.
-3. Replace the default code with the block below and save — both doPost (backup) and doGet (import) are needed:
+3. Replace the default code with the v3 block below and save — it handles ledger backup/import plus the **full-state snapshot**:
 ```javascript
 var SECRET = "";  // (optional) same value as 'Shared token' below; empty = no check.
 
-function doPost(e) {  // app → sheet (backup)
+function doPost(e) {  // app → sheet (ledger backup + full-state snapshot)
   try {
     var body = JSON.parse(e.postData.contents);
     if (SECRET && String(body.token || "") !== SECRET) return _json({ok:false,error:"bad token"});
-    var rows = body.rows || [];
     var ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (body.state !== undefined) {  // full state: JSON stored in 40,000-char chunks on 'state' tab
+      var st = ss.getSheetByName("state") || ss.insertSheet("state");
+      st.clearContents();
+      var s = String(body.state || "");
+      var out = [[String(body.saved_at || "")]];
+      for (var i = 0; i < s.length; i += 40000) out.push(["#" + s.substring(i, i + 40000)]);
+      st.getRange(1, 1, out.length, 1).setValues(out);
+      return _json({ok:true, chunks: out.length - 1});
+    }
+    var rows = body.rows || [];
     var sh = ss.getSheetByName("ledger") || ss.insertSheet("ledger");
     sh.clearContents();
     if (rows.length) sh.getRange(1,1,rows.length,rows[0].length).setValues(rows);
@@ -2706,11 +2755,20 @@ function doPost(e) {  // app → sheet (backup)
   } catch (err) { return _json({ok:false,error:String(err)}); }
 }
 
-function doGet(e) {  // sheet → app (import)
+function doGet(e) {  // sheet → app (ledger import + state restore)
   try {
     var p = (e && e.parameter) || {};
     if (SECRET && String(p.token || "") !== SECRET) return _json({ok:false,error:"bad token"});
-    var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("ledger");
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (String(p.action || "") === "read_state") {
+      var st = ss.getSheetByName("state");
+      if (!st) return _json({ok:true, state:"", saved_at:""});
+      var vals = st.getDataRange().getValues();
+      var parts = [];
+      for (var i = 1; i < vals.length; i++) parts.push(String(vals[i][0]).replace(/^#/, ""));
+      return _json({ok:true, state: parts.join(""), saved_at: vals.length ? String(vals[0][0]) : ""});
+    }
+    var sh = ss.getSheetByName("ledger");
     return _json({ok:true, rows: sh ? sh.getDataRange().getDisplayValues() : []});
   } catch (err) { return _json({ok:false,error:String(err)}); }
 }
@@ -2721,8 +2779,13 @@ function _json(obj) {
 ```
 4. **Deploy → New deployment → Web app**, Execute as **Me**, Access **Anyone** → Deploy → authorize.
 5. Copy the **web app URL** (.../exec) and paste it below.
+6. **(Strongly recommended)** Streamlit Cloud → App settings → **Secrets** — add the lines below so the URL survives redeploys and boot auto-restore always works:
+```toml
+gsheet_webapp_url = "https://script.google.com/macros/s/..../exec"
+# if you use a token: gsheet_webapp_token = "same as SECRET"
+```
 * To protect it, set SECRET in the code and the 'Shared token' below to the same value.
-* Already deployed the old (doPost-only) code? Replace it with the block above → **Manage deployments → Edit → New version** (URL stays the same)."""))
+* Already deployed an older version? Replace the code with v3 above → **Manage deployments → Edit → New version** (URL stays the same)."""))
 
     st.session_state.gsheet_webapp_url = st.text_input(
         t("Apps Script URL", "Apps Script URL"),
@@ -2777,6 +2840,39 @@ function _json(obj) {
                 "no_key_column": t("시트에 ‘키’ 컬럼이 없습니다 — 새 스크립트(doGet 포함)로 재배포하고 한 번 백업하세요.", "No ‘키’ key column — redeploy the new script (with doGet) and back up once."),
             }
             st.markdown(line(_imap.get(_ri["error"], t(f"가져오기 실패 — {_ri['error']}", f"Import failed — {_ri['error']}")), "b"), unsafe_allow_html=True)
+
+    # ---- 전체 상태 백업 · 복원 (재배포 대비) ----
+    st.markdown(f'<div class="footnote" style="margin:14px 0 2px 0;font-weight:700;color:var(--ink2);">{t("전체 상태 백업 · 복원 (재배포 대비)", "Full-state backup · restore (survives redeploys)")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footnote" style="margin:0 0 6px 0;">{t("장부 외의 모든 기록(승/패 확정 · 감정 태그 · 복기 노트 · 현금/입출금 입력 등)을 시트의 state 탭에 저장합니다. Streamlit Cloud가 재배포·재부팅되어 로컬 파일이 초기화되면 부팅 때 자동 복원됩니다. ⚠️ URL 자체도 살아남게 하려면 앱 설정 → Secrets에 gsheet_webapp_url(및 토큰 쓰면 gsheet_webapp_token)을 넣어두세요.", "Saves everything beyond the ledger (resolutions, emotion tags, review notes, cash inputs …) to the sheet’s state tab. If a redeploy wipes the local file, the app auto-restores on boot. ⚠️ Put gsheet_webapp_url (and gsheet_webapp_token if used) in App settings → Secrets so the URL itself survives redeploys.")}</div>', unsafe_allow_html=True)
+    _ss_last = str(st.session_state.get("_gsheet_state_last_backup", "") or "")
+    if _ss_last:
+        st.markdown(f'<div class="footnote">{t(f"마지막 상태 백업: {_ss_last}", f"Last state backup: {_ss_last}")}</div>', unsafe_allow_html=True)
+    _c_sb, _c_sr = st.columns(2)
+    with _c_sb:
+        if st.button(t("지금 전체 상태 백업", "Back up full state now"), width="stretch", key="state_backup_now"):
+            _sb = backup_state_via_webapp()
+            if _sb["ok"]:
+                st.success(t("전체 상태를 시트 state 탭에 저장했습니다.", "Full state saved to the sheet’s state tab."))
+            else:
+                _sbmap = {"no_url": t("Apps Script URL을 먼저 입력하세요.", "Enter the Apps Script URL first.")}
+                st.markdown(line(_sbmap.get(_sb["error"], t(f"상태 백업 실패 — {_sb['error']}", f"State backup failed — {_sb['error']}")), "b"), unsafe_allow_html=True)
+    with _c_sr:
+        _confirm_restore = st.checkbox(
+            t("복원이 현재 앱 상태를 시트 스냅샷으로 덮어쓰는 것을 이해했습니다", "I understand restore overwrites the current app state"),
+            key="state_restore_confirm")
+        if st.button(t("시트에서 전체 상태 복원", "Restore full state from sheet"), width="stretch",
+                     key="state_restore_now", disabled=not _confirm_restore):
+            _sr = restore_state_from_webapp()
+            if _sr["ok"]:
+                st.success(t(f"복원 완료 · {_sr['restored']}개 항목 · 스냅샷 {_sr['saved_at']}",
+                             f"Restored · {_sr['restored']} keys · snapshot {_sr['saved_at']}"))
+                st.rerun()
+            else:
+                _srmap = {
+                    "no_url": t("Apps Script URL을 먼저 입력하세요.", "Enter the Apps Script URL first."),
+                    "no_snapshot": t("시트에 상태 스냅샷이 없습니다 — 먼저 ‘지금 전체 상태 백업’을 누르세요.", "No snapshot in the sheet — press ‘Back up full state now’ first."),
+                }
+                st.markdown(line(_srmap.get(_sr["error"], t(f"복원 실패 — {_sr['error']}", f"Restore failed — {_sr['error']}")), "b"), unsafe_allow_html=True)
 
     with st.expander(t("고급: 서비스 계정 (gspread) 방식", "Advanced: service account (gspread)")):
         _gs = gsheet_status()
@@ -3189,6 +3285,14 @@ try:
                     pass
             else:
                 st.session_state._gsheet_backup_fail_sig = _gb_sig
+except Exception:
+    pass
+
+# 전체 상태 스냅샷 자동 백업 — 내용이 실제로 바뀌었을 때만, 최소 2분 간격 (웹앱 방식 전용).
+# 재배포로 로컬 파일이 사라져도 부팅 복원이 가능하도록 시트 'state' 탭을 최신으로 유지한다.
+try:
+    if st.session_state.get("gsheet_autobackup"):
+        maybe_backup_state()
 except Exception:
     pass
 
