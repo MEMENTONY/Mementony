@@ -1198,6 +1198,7 @@ def _ledger_recs_for_analysis(ledger=None, emotions=None, chase_window_min=60):
         recs.append({
             "key": k, "pnl": _safe_float(v.get("pnl"), 0.0),
             "date": str(v.get("date", "") or "")[:10],
+            "category": str(v.get("category", "") or ""),
             "emotion": e if 1 <= e <= 5 else 0,
             "chase_flag": bool(tag.get("chase")),
             "first_ts": _safe_float(v.get("first_ts"), -1.0),
@@ -1393,6 +1394,126 @@ def rule_simulation(ledger=None, emotions=None, rules=None, chase_window_min=60)
             cs += by_day[d0][1]
             daily.append({"date": d0, "actual": round(ca, 2), "ruled": round(cs, 2)})
         out["daily"] = daily
+        return out
+    except Exception:
+        return empty
+
+
+def equity_curve_data(ledger=None, emotions=None):
+    """장부 기준 일별 실현손익 → 누적 자산 곡선 + 최대 낙폭(MDD). Fails soft."""
+    empty = {"n": 0, "daily": [], "total": 0.0, "peak": 0.0, "mdd": 0.0, "mdd_date": "", "days": 0}
+    try:
+        recs = _ledger_recs_for_analysis(ledger, emotions)
+        by_day = {}
+        for r in recs:
+            if r.get("date"):
+                by_day[r["date"]] = by_day.get(r["date"], 0.0) + r["pnl"]
+        if not by_day:
+            return empty
+        cum, peak, mdd, mdd_date, daily = 0.0, 0.0, 0.0, "", []
+        for d0 in sorted(by_day):
+            cum += by_day[d0]
+            peak = max(peak, cum)
+            dd = peak - cum
+            if dd > mdd:
+                mdd, mdd_date = dd, d0
+            daily.append({"date": d0, "pnl": round(by_day[d0], 2), "cum": round(cum, 2)})
+        return {"n": len(recs), "daily": daily, "total": round(cum, 2), "peak": round(peak, 2),
+                "mdd": round(mdd, 2), "mdd_date": mdd_date, "days": len(daily)}
+    except Exception:
+        return empty
+
+
+def calendar_heatmap_data(weeks=12, end=None, ledger=None, emotions=None):
+    """일별 손익 캘린더(월~일 × 최근 N주) 데이터. end는 테스트용 고정 날짜(date).
+    셀: {date, pnl(거래 없으면 None), count, future}. Fails soft."""
+    try:
+        recs = _ledger_recs_for_analysis(ledger, emotions)
+        by_day = {}
+        for r in recs:
+            if r.get("date"):
+                a = by_day.setdefault(r["date"], {"pnl": 0.0, "count": 0})
+                a["pnl"] += r["pnl"]
+                a["count"] += 1
+        end_d = end or datetime.now(KST).date()
+        start_monday = end_d - timedelta(days=end_d.weekday() + 7 * (max(int(weeks), 1) - 1))
+        grid = []
+        for w in range(max(int(weeks), 1)):
+            row = []
+            for wd in range(7):
+                d0 = start_monday + timedelta(days=w * 7 + wd)
+                iso = d0.isoformat()
+                cell = by_day.get(iso)
+                row.append({"date": iso, "pnl": round(cell["pnl"], 2) if cell else None,
+                            "count": cell["count"] if cell else 0, "future": d0 > end_d})
+            grid.append(row)
+        traded = [abs(c["pnl"]) for wrow in grid for c in wrow if c["pnl"] is not None and abs(c["pnl"]) > 1e-9]
+        if traded:
+            idx = min(len(traded) - 1, max(int(round(len(traded) * 0.95)) - 1, 0))
+            scale = sorted(traded)[idx]
+        else:
+            scale = 1.0
+        return {"grid": grid, "scale": max(scale, 1e-9), "start": start_monday.isoformat(), "end": end_d.isoformat()}
+    except Exception:
+        return {"grid": [], "scale": 1.0, "start": "", "end": ""}
+
+
+def weekly_report(now=None, ledger=None, emotions=None):
+    """이번 주(월~일, KST) vs 지난주 요약 — 손익·건수·승률·감정적(틸트∪추격)·규칙위반 손익·최악 카테고리.
+    now는 테스트용 고정 date. Fails soft."""
+    def _bucket():
+        return {"pnl": 0.0, "n": 0, "wins": 0, "win_rate": 0.0,
+                "emotional_pnl": 0.0, "emotional_n": 0, "violation_pnl": 0.0, "violation_n": 0,
+                "worst_category": "", "worst_category_pnl": 0.0}
+    empty = {"this": _bucket(), "last": _bucket(), "delta_pnl": 0.0,
+             "this_start": "", "last_start": "", "has_data": False}
+    try:
+        recs = _ledger_recs_for_analysis(ledger, emotions)
+        el = max(_safe_float(profile().get("emotional_limit"), 0.0), 0.0)
+        today = now or datetime.now(KST).date()
+        this_mon = today - timedelta(days=today.weekday())
+        last_mon = this_mon - timedelta(days=7)
+        out = {"this": _bucket(), "last": _bucket(), "delta_pnl": 0.0,
+               "this_start": this_mon.isoformat(), "last_start": last_mon.isoformat(), "has_data": False}
+        cats = {"this": {}, "last": {}}
+        for r in recs:
+            d0 = r.get("date")
+            if not d0:
+                continue
+            try:
+                rd = date.fromisoformat(d0)
+            except Exception:
+                continue
+            if this_mon <= rd <= today:
+                w = "this"
+            elif last_mon <= rd < this_mon:
+                w = "last"
+            else:
+                continue
+            b = out[w]
+            b["pnl"] += r["pnl"]
+            b["n"] += 1
+            if r["pnl"] > 0:
+                b["wins"] += 1
+            if r["emotion"] >= 4 or r["_chase"]:
+                b["emotional_pnl"] += r["pnl"]
+                b["emotional_n"] += 1
+            if r["avg_buy_price"] >= 80.0 or (el > 0 and r["buy_cost"] > el):
+                b["violation_pnl"] += r["pnl"]
+                b["violation_n"] += 1
+            cat = r.get("category") or t("기타", "Other")
+            cats[w][cat] = cats[w].get(cat, 0.0) + r["pnl"]
+        for w in ("this", "last"):
+            b = out[w]
+            b["win_rate"] = (b["wins"] / b["n"] * 100.0) if b["n"] else 0.0
+            for k in ("pnl", "emotional_pnl", "violation_pnl"):
+                b[k] = round(b[k], 2)
+            if cats[w]:
+                worst = min(cats[w].items(), key=lambda kv: kv[1])
+                if worst[1] < 0:
+                    b["worst_category"], b["worst_category_pnl"] = worst[0], round(worst[1], 2)
+        out["delta_pnl"] = round(out["this"]["pnl"] - out["last"]["pnl"], 2)
+        out["has_data"] = bool(out["this"]["n"] or out["last"]["n"])
         return out
     except Exception:
         return empty
@@ -1682,6 +1803,9 @@ __all__ = [
     '_mark_stopped_after_losses',
     'RULE_SIM_RULES',
     'rule_simulation',
+    'equity_curve_data',
+    'calendar_heatmap_data',
+    'weekly_report',
     'performance_summary',
     'visible_portfolio_positions',
 ]
