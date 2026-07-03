@@ -929,21 +929,25 @@ try:
 except (TypeError, ValueError):
     st.session_state.side_panel_trade_limit = 5
 
-# Auto-sync the saved wallet once per session: just opening/refreshing the app keeps the
-# trade ledger current. Dedup is by tx_id (no duplicate saving). The Journal tab button
-# forces a fresh re-sync within a session.
+# 세션당 1회 지갑 '전체' 자동 동기화: 열기만 하면 보유 포지션·지갑 가치·거래내역·장부가
+# 최신이 되고, 종료된 마켓은 승/패까지 자동 확정된다 (설정·도구에서 끌 수 있음).
 # Wrapped so this startup network step can NEVER break the app boot (e.g. a slow/failed
 # fetch, or a stale module after a redeploy) -- worst case it silently skips.
 try:
-    if not st.session_state.get("_wallet_autosynced"):
+    if st.session_state.get("auto_sync_on_boot", True) and not st.session_state.get("_wallet_autosynced"):
         st.session_state._wallet_autosynced = True
         _wa = str(st.session_state.get("wallet_addr", "") or "").strip()
         if _wa.startswith("0x") and len(_wa) == 42:
-            _auto = sync_wallet(_wa, limit=100, force=False)
-            if _auto.get("ok") and _auto.get("added"):
+            _auto = sync_wallet_full(_wa, limit=100, force=False)
+            if _auto.get("ok") and (_auto.get("added") or _auto.get("resolved_won") or _auto.get("resolved_lost")):
+                _parts = []
+                if _auto.get("added"):
+                    _parts.append(t(f"새 거래 {_auto['added']}건", f"{_auto['added']} new trades"))
+                if _auto.get("resolved_won") or _auto.get("resolved_lost"):
+                    _parts.append(t(f"자동 확정 승 {_auto['resolved_won']} · 패 {_auto['resolved_lost']}",
+                                    f"auto-resolved W{_auto['resolved_won']} · L{_auto['resolved_lost']}"))
                 try:
-                    st.toast(t(f"지갑 자동 동기화 · 새 거래 {_auto['added']}건 장부에 저장",
-                               f"Wallet auto-synced · {_auto['added']} new trades saved"))
+                    st.toast(t("지갑 자동 동기화 · ", "Wallet auto-synced · ") + " · ".join(_parts))
                 except Exception:
                     pass
 except Exception:
@@ -1951,13 +1955,18 @@ with tab4:
 
         if st.button(t("거래내역 불러오기 (강제 새로고침)", "Import trades (force refresh)"), width="stretch", key="activity_import_btn"):
             with st.spinner(t("거래내역 불러오는 중", "Fetching activity")):
-                _res = sync_wallet(st.session_state.wallet_addr, limit=act_limit, force=True)
+                _res = sync_wallet_full(st.session_state.wallet_addr, limit=act_limit, force=True)
             if _res["error"] == "bad_address":
                 st.markdown(line(t("주소 형식 오류 — 0x로 시작하는 42자 주소인지 확인하세요.", "Bad address — must be 42 chars starting with 0x."), "b"), unsafe_allow_html=True)
             elif not _res["ok"]:
                 st.markdown(line(t(f"거래내역 불러오기 실패 — {_res['error']}", f"Activity import failed — {_res['error']}"), "b"), unsafe_allow_html=True)
             else:
-                st.markdown(line(t(f"거래내역 {_res['found']}건 확인 · 새로 추가 {_res['added']}건 (장부에 저장됨)", f"Found {_res['found']} trades · added {_res['added']} (saved to ledger)"), "g"), unsafe_allow_html=True)
+                _imp_msg = t(f"거래내역 {_res['found']}건 확인 · 새로 추가 {_res['added']}건 · 보유 포지션 {_res['positions']}개 갱신",
+                             f"Found {_res['found']} trades · added {_res['added']} · {_res['positions']} positions refreshed")
+                if _res.get("resolved_won") or _res.get("resolved_lost"):
+                    _imp_msg += t(f" · 자동 확정 승 {_res['resolved_won']} · 패 {_res['resolved_lost']}",
+                                  f" · auto-resolved W{_res['resolved_won']} · L{_res['resolved_lost']}")
+                st.markdown(line(_imp_msg, "g"), unsafe_allow_html=True)
 
         # --- 승/패 자동 확정: 폴리마켓 결과를 조회해 잔여 보유 미확정 거래를 자동 판정 ---
         _arm = str(st.session_state.pop("_auto_resolve_msg", "") or "")
@@ -2370,72 +2379,22 @@ with tab_pf:
         st.markdown(f'<div class="footnote" style="margin:0 0 10px 0;">{t("폴리마켓 프로필 주소(0x로 시작)를 붙여넣으면 공개 데이터 API로 현재 보유 포지션을 읽어옵니다. 로그인·서명 없이 조회만 합니다.", "Paste your Polymarket wallet address. We read open positions via the public data API — read-only, no login or signing.")}</div>', unsafe_allow_html=True)
         st.session_state.wallet_addr = st.text_input(t("지갑 주소", "Wallet address"), value=st.session_state.wallet_addr, placeholder="0x...", key="portfolio_wallet_addr")
         if st.button(t("보유 포지션 불러오기", "Import open positions"), width="stretch"):
-            a = st.session_state.wallet_addr.strip()
-            if not (a.startswith("0x") and len(a) == 42):
+            # 거래일지 버튼·부팅 자동 동기화와 같은 단일 파이프라인(sync_wallet_full)을 쓴다.
+            with st.spinner(t("폴리마켓에서 불러오는 중", "Fetching")):
+                _pf_res = sync_wallet_full(st.session_state.wallet_addr, limit=200, force=True)
+            if _pf_res["ok"]:
+                _pf_msg = t(f"현재 보유 포지션 {_pf_res['positions']}개", f"{_pf_res['positions']} open positions")
+                if _pf_res.get("resolved_won") or _pf_res.get("resolved_lost"):
+                    _pf_msg += t(f" · 자동 확정 승 {_pf_res['resolved_won']} · 패 {_pf_res['resolved_lost']}",
+                                 f" · auto-resolved W{_pf_res['resolved_won']} · L{_pf_res['resolved_lost']}")
+                st.toast(_pf_msg)
+                st.rerun()
+            elif _pf_res["error"] == "bad_address":
                 st.markdown(line(t("주소 형식 오류 — 0x로 시작하는 42자 주소인지 확인하세요.", "Bad address — must be 42 chars starting with 0x."), "b"), unsafe_allow_html=True)
+            elif str(_pf_res["error"]).startswith("http_"):
+                st.markdown(line(t(f"연결 실패 (HTTP {str(_pf_res['error'])[5:]}) — 주소 확인 필요", f"Failed (HTTP {str(_pf_res['error'])[5:]}) — check address"), "b"), unsafe_allow_html=True)
             else:
-                try:
-                    with st.spinner(t("폴리마켓에서 불러오는 중", "Fetching")):
-                        fetch_wallet_positions.clear()
-                        items = fetch_wallet_positions(a)
-                    st.session_state.wallet_raw = items
-                    try:
-                        fetch_wallet_value.clear()
-                        st.session_state.pnl_raw = fetch_wallet_value(a)
-                    except Exception as _pnl_err:
-                        st.session_state.pnl_raw = {"error": str(_pnl_err)}
-                    activity_raw = []
-                    activity_items = []
-                    activity_events = []
-                    activity_added = 0
-                    activity_error = ""
-                    try:
-                        fetch_wallet_activity.clear()
-                        activity_raw = fetch_wallet_activity(a, limit=200)
-                        st.session_state.activity_raw = activity_raw
-                        activity_events = normalize_activity_events(activity_raw)
-                        st.session_state.activity_events = activity_events
-                        activity_items = sort_trades_newest_first(normalize_activity(activity_raw))
-                        activity_added = merge_activity_into_log(activity_items)
-                        st.session_state.auto_trades = sort_trades_newest_first(st.session_state.get("auto_trades", []))
-                    except Exception as _activity_err:
-                        activity_error = str(_activity_err)
-                        st.session_state.activity_events = st.session_state.get("activity_events", [])
-                        st.session_state.activity_raw = st.session_state.get("activity_raw", [])
-                        st.session_state.pnl_raw = {
-                            **(st.session_state.pnl_raw if isinstance(st.session_state.pnl_raw, dict) else {}),
-                            "activity_error": str(_activity_err),
-                        }
-                    open_items = [it for it in items if is_open_position(it)] if isinstance(items, list) else []
-                    st.session_state.portfolio = [dict(
-                        name=it.get("title") or "Polymarket position",
-                        outcome=it.get("outcome", ""),
-                        buy=round(_safe_float(it.get("avgPrice"), 0) * 100, 1),
-                        shares=round(_safe_float(it.get("size"), 0), 2),
-                        inv=round(_safe_float(it.get("initialValue"), 0), 2),
-                        cur=round(_safe_float(it.get("curPrice"), 0) * 100, 1),
-                        asset=str(it.get("asset") or it.get("tokenId") or it.get("clobTokenId") or it.get("conditionId") or ""),
-                    ) for it in open_items]
-                    st.session_state.api_sync_meta = {
-                        "status": "partial" if activity_error else "ok",
-                        "source": t("포트폴리오", "Portfolio"),
-                        "wallet": a,
-                        "last_sync_at": datetime.now(KST).isoformat(timespec="minutes"),
-                        "positions": len(open_items),
-                        "raw_activity": len(activity_raw) if isinstance(activity_raw, list) else 0,
-                        "trades": len(activity_items),
-                        "events": len(activity_events),
-                        "added": activity_added,
-                        "error": activity_error,
-                    }
-                    st.toast(t(f"현재 보유 포지션 {len(open_items)}개", f"{len(open_items)} open positions"))
-                    st.rerun()
-                except urllib.error.HTTPError as e:
-                    st.markdown(line(t(f"연결 실패 (HTTP {e.code}) — 주소 확인 필요", f"Failed (HTTP {e.code}) — check address"), "b"), unsafe_allow_html=True)
-                except urllib.error.URLError:
-                    st.markdown(line(t("응답 없음 — 잠시 후 다시 시도하세요.", "No response — try again later."), "b"), unsafe_allow_html=True)
-                except Exception as e:
-                    st.markdown(line(t(f"불러오기 실패 — {e}", f"Import failed — {e}"), "b"), unsafe_allow_html=True)
+                st.markdown(line(t(f"불러오기 실패 — {_pf_res['error']}", f"Import failed — {_pf_res['error']}"), "b"), unsafe_allow_html=True)
 
     if st.session_state.portfolio:
         hidden_labels = {}
@@ -2893,6 +2852,17 @@ gsheet_webapp_url = "https://script.google.com/macros/s/..../exec"
             placeholder="https://docs.google.com/spreadsheets/d/....",
             key="gsheet_url_input",
         )
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    # ---- auto sync ----
+    st.markdown(f'<div class="eyebrow">{t("자동 동기화", "Auto sync")}</div>', unsafe_allow_html=True)
+    st.session_state.auto_sync_on_boot = st.checkbox(
+        t("앱 열 때 지갑 전체 자동 동기화 (포지션·거래내역·승/패 자동확정)", "Full wallet auto-sync on app load (positions · trades · auto-resolve)"),
+        value=bool(st.session_state.get("auto_sync_on_boot", True)),
+        help=t("켜두면 앱을 열기만 해도 보유 포지션과 장부가 최신이 되고, 종료된 마켓은 승/패가 자동 확정됩니다 (세션당 1회).",
+               "When on, just opening the app refreshes positions and the ledger, and closed markets are auto-resolved (once per session)."),
+    )
 
     st.markdown("<hr>", unsafe_allow_html=True)
 

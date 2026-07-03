@@ -20,6 +20,8 @@ def build_state():
                     "max_pct": 3.0, "block_pct": 12.0, "start_when": "자동 시작", "freq": "", "cats": [],
                     "loss_reaction": "기본값"},
         "wallet_addr": "0x1234567890abcdef1234567890abcdef12345678",
+        # 테스트는 네트워크를 쓰지 않아야 하므로 부팅 자동 동기화는 끈다 (앱 기본값은 True)
+        "auto_sync_on_boot": False,
         "auto_trades": [
             # C: 전날 40¢ 매수 → 55¢ 매도 = +$7.50 (일별 누적 차트용 둘째 날)
             trade("t0a", "2026-06-30T10:00:00+09:00", "US CPI above 3% in June?", "No", "BUY", 40.0, 50.0, "66666666666666666666"),

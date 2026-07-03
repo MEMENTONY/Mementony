@@ -1534,6 +1534,68 @@ def sync_wallet(addr, limit=100, force=False):
         return {"ok": False, "error": str(e), "added": 0, "found": 0}
 
 
+def sync_wallet_full(addr, limit=200, force=False, resolve=True):
+    """지갑 동기화 단일 파이프라인: 보유 포지션 + 지갑 가치 + 활동내역(→장부) + 승/패 자동확정.
+    포트폴리오/거래일지 버튼과 부팅 자동 동기화가 전부 이 함수를 쓴다. 포지션 조회가 실패해도
+    활동내역 동기화는 계속한다(부분 성공은 partial에 기록). Never raises."""
+    a = str(addr or "").strip()
+    base = {"ok": False, "error": "", "added": 0, "found": 0, "positions": 0,
+            "resolved_won": 0, "resolved_lost": 0, "partial": ""}
+    if not (a.startswith("0x") and len(a) == 42):
+        return {**base, "error": "bad_address"}
+    partial = []
+    positions_n = 0
+    try:
+        # 1) 보유 포지션 + 지갑 가치
+        try:
+            if force:
+                fetch_wallet_positions.clear()
+                fetch_wallet_value.clear()
+            items = fetch_wallet_positions(a)
+            st.session_state.wallet_raw = items
+            open_items = [it for it in items if is_open_position(it)] if isinstance(items, list) else []
+            st.session_state.portfolio = [dict(
+                name=it.get("title") or "Polymarket position",
+                outcome=it.get("outcome", ""),
+                buy=round(_safe_float(it.get("avgPrice"), 0) * 100, 1),
+                shares=round(_safe_float(it.get("size"), 0), 2),
+                inv=round(_safe_float(it.get("initialValue"), 0), 2),
+                cur=round(_safe_float(it.get("curPrice"), 0) * 100, 1),
+                asset=str(it.get("asset") or it.get("tokenId") or it.get("clobTokenId") or it.get("conditionId") or ""),
+            ) for it in open_items]
+            positions_n = len(open_items)
+            try:
+                st.session_state.pnl_raw = fetch_wallet_value(a)
+            except Exception as e:
+                st.session_state.pnl_raw = {"error": str(e)}
+                partial.append(f"value: {e}")
+        except Exception as e:
+            partial.append(f"positions: {e}")
+        # 2) 활동내역 → auto_trades 병합 → 장부 갱신 (+ sync meta)
+        r = sync_wallet(a, limit=limit, force=force)
+        if not r.get("ok"):
+            return {**base, **r, "positions": positions_n, "partial": " · ".join(partial)}
+        # 3) 종료된 마켓 승/패 자동확정 (fail-soft — 실패해도 동기화는 성공으로 취급)
+        won = lost = 0
+        if resolve:
+            try:
+                ar = auto_resolve_trades()
+                if ar.get("ok"):
+                    won, lost = int(ar.get("won", 0)), int(ar.get("lost", 0))
+            except Exception:
+                pass
+        meta = dict(st.session_state.get("api_sync_meta") or {})
+        meta["positions"] = positions_n
+        if partial:
+            meta["status"] = "partial"
+            meta["error"] = " · ".join(partial)
+        st.session_state.api_sync_meta = meta
+        return {**base, **r, "ok": True, "positions": positions_n,
+                "resolved_won": won, "resolved_lost": lost, "partial": " · ".join(partial)}
+    except Exception as e:
+        return {**base, "error": str(e), "positions": positions_n, "partial": " · ".join(partial)}
+
+
 __all__ = [
     '_ai_plain_fallback',
     '_market_table',
@@ -1560,5 +1622,6 @@ __all__ = [
     'sync_portfolio_hidden_checkbox',
     'sync_today_cash_adjustment',
     'sync_wallet',
+    'sync_wallet_full',
     'today_dashboard_html',
 ]
