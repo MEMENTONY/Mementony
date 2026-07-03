@@ -1175,6 +1175,47 @@ def performance_summary(ledger=None):
                 "gross_win": 0.0, "gross_loss": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
                 "profit_factor": None, "by_category": {}}
 
+def _ledger_recs_for_analysis(ledger=None, emotions=None, chase_window_min=60):
+    """장부(dedupe)+감정 태그를 분석용 rec 리스트로 만든다 — behavior_insights와
+    rule_simulation이 공유. 추격 자동감지까지 계산해 _chase/_chase_detected를 채운다."""
+    led = ledger if isinstance(ledger, dict) else (st.session_state.get("trade_ledger") or {})
+    emo = emotions if isinstance(emotions, dict) else (st.session_state.get("trade_emotions") or {})
+    uniq = {}
+    for k, v in led.items():
+        if not isinstance(v, dict):
+            continue
+        mk = (str(v.get("market", "")).strip().lower(), str(v.get("outcome", "")).strip().lower())
+        cur = uniq.get(mk)
+        if cur is None or str(v.get("updated_at", "")) >= str(cur[1].get("updated_at", "")):
+            uniq[mk] = (str(k), v)
+    recs = []
+    for k, v in uniq.values():
+        if v.get("pnl") is None:
+            continue
+        tag = emo.get(k)
+        tag = tag if isinstance(tag, dict) else {}
+        e = int(_safe_float(tag.get("emotion"), 0))
+        recs.append({
+            "key": k, "pnl": _safe_float(v.get("pnl"), 0.0),
+            "date": str(v.get("date", "") or "")[:10],
+            "emotion": e if 1 <= e <= 5 else 0,
+            "chase_flag": bool(tag.get("chase")),
+            "first_ts": _safe_float(v.get("first_ts"), -1.0),
+            "latest_ts": _safe_float(v.get("latest_ts"), -1.0),
+            "avg_buy_price": _safe_float(v.get("avg_buy_price"), -1.0),
+            "buy_cost": _safe_float(v.get("buy_cost"), -1.0),
+        })
+    # 추격 자동감지: (다른) 손실 거래의 정산 후 window분 내 첫 매수. 자기 자신은 제외.
+    window = max(_safe_float(chase_window_min, 0.0), 0.0) * 60.0
+    loss_times = [(r["key"], r["latest_ts"]) for r in recs if r["pnl"] < 0 and r["latest_ts"] > 0]
+    for r in recs:
+        detected = r["first_ts"] > 0 and any(
+            k != r["key"] and 0 <= r["first_ts"] - lt <= window for k, lt in loss_times)
+        r["_chase_detected"] = detected
+        r["_chase"] = detected or r["chase_flag"]
+    return recs
+
+
 def behavior_insights(ledger=None, emotions=None, chase_window_min=60):
     """감정·행동 복기 인사이트 — '감정적일 때 얼마 잃는지'를 숫자로 만든다.
     trade_ledger(확정 손익)와 trade_emotions(감정 1 침착~5 틸트 · 추격 플래그)를 그룹 key로 조인해
@@ -1188,32 +1229,7 @@ def behavior_insights(ledger=None, emotions=None, chase_window_min=60):
              "violation": {"n": 0, "pnl": 0.0}, "emotional": {"n": 0, "pnl": 0.0},
              "window_min": chase_window_min}
     try:
-        led = ledger if isinstance(ledger, dict) else (st.session_state.get("trade_ledger") or {})
-        emo = emotions if isinstance(emotions, dict) else (st.session_state.get("trade_emotions") or {})
-        uniq = {}
-        for k, v in led.items():
-            if not isinstance(v, dict):
-                continue
-            mk = (str(v.get("market", "")).strip().lower(), str(v.get("outcome", "")).strip().lower())
-            cur = uniq.get(mk)
-            if cur is None or str(v.get("updated_at", "")) >= str(cur[1].get("updated_at", "")):
-                uniq[mk] = (str(k), v)
-        recs = []
-        for k, v in uniq.values():
-            if v.get("pnl") is None:
-                continue
-            tag = emo.get(k)
-            tag = tag if isinstance(tag, dict) else {}
-            e = int(_safe_float(tag.get("emotion"), 0))
-            recs.append({
-                "key": k, "pnl": _safe_float(v.get("pnl"), 0.0),
-                "emotion": e if 1 <= e <= 5 else 0,
-                "chase_flag": bool(tag.get("chase")),
-                "first_ts": _safe_float(v.get("first_ts"), -1.0),
-                "latest_ts": _safe_float(v.get("latest_ts"), -1.0),
-                "avg_buy_price": _safe_float(v.get("avg_buy_price"), -1.0),
-                "buy_cost": _safe_float(v.get("buy_cost"), -1.0),
-            })
+        recs = _ledger_recs_for_analysis(ledger, emotions, chase_window_min)
         if not recs:
             return empty
         out = json.loads(json.dumps(empty))  # deep copy
@@ -1249,14 +1265,8 @@ def behavior_insights(ledger=None, emotions=None, chase_window_min=60):
             sy = sum((p[1] - my) ** 2 for p in pts) ** 0.5
             if sx > 1e-9 and sy > 1e-9:
                 out["corr"] = round(sum((p[0] - mx) * (p[1] - my) for p in pts) / (sx * sy), 2)
-        # ② 추격 재진입: (다른) 손실 거래의 정산시각 후 window분 안에 첫 매수가 있으면 자동감지.
-        # 자기 자신은 제외 — 단일 체결 손실은 첫 매수시각=정산시각이라 자신과 매칭돼 버린다.
-        window = max(_safe_float(chase_window_min, 0.0), 0.0) * 60.0
-        loss_times = [(r["key"], r["latest_ts"]) for r in recs if r["pnl"] < 0 and r["latest_ts"] > 0]
+        # ② 추격 재진입 (자동감지는 _ledger_recs_for_analysis에서 계산됨 — 자기 자신 제외 규칙 포함)
         for r in recs:
-            detected = r["first_ts"] > 0 and any(
-                k != r["key"] and 0 <= r["first_ts"] - lt <= window for k, lt in loss_times)
-            r["_chase"] = detected or r["chase_flag"]
             if r["_chase"]:
                 c = out["chase"]
                 c["n"] += 1
@@ -1265,7 +1275,7 @@ def behavior_insights(ledger=None, emotions=None, chase_window_min=60):
                     c["wins"] += 1
                 if r["chase_flag"]:
                     c["flagged"] += 1
-                if detected:
+                if r["_chase_detected"]:
                     c["detected"] += 1
         # ③ 규칙 위반: 80¢ 이상 진입 · 감정 한도($) 초과 과대베팅 (합집합 = violation)
         el = max(_safe_float(profile().get("emotional_limit"), 0.0), 0.0)
@@ -1290,6 +1300,99 @@ def behavior_insights(ledger=None, emotions=None, chase_window_min=60):
                 out["emotional"]["pnl"] += r["pnl"]
         for grp in ("calm", "tilt", "chase", "high_price", "oversized", "violation", "emotional"):
             out[grp]["pnl"] = round(out[grp]["pnl"], 2)
+        return out
+    except Exception:
+        return empty
+
+
+RULE_SIM_RULES = ("skip_high_price", "cap_size", "no_chase", "stop_after_losses")
+
+def _mark_stopped_after_losses(recs, streak_to_stop=2):
+    """'N연패 후 당일 중단' 규칙의 대상 표시: 같은 날 정산 순서로 걸으며 연속 손실이
+    streak_to_stop에 도달한 시점 이후에 '진입한'(first_ts 기준) 거래에 _stopped=True.
+    시각 정보가 없는 거래(first/latest_ts<=0)는 판단 불가라 건드리지 않는다."""
+    by_day = {}
+    for r in recs:
+        r["_stopped"] = False
+        if r.get("date") and r["latest_ts"] > 0:
+            by_day.setdefault(r["date"], []).append(r)
+    for day_recs in by_day.values():
+        day_recs.sort(key=lambda x: x["latest_ts"])
+        streak = 0
+        cutoff = None
+        for r in day_recs:
+            if cutoff is not None and r["first_ts"] > cutoff:
+                r["_stopped"] = True  # 중단 시점 이후 신규 진입 — 없었을 거래
+                continue
+            if r["pnl"] < 0:
+                streak += 1
+            elif r["pnl"] > 0:
+                streak = 0
+            if streak >= max(int(streak_to_stop), 1) and cutoff is None:
+                cutoff = r["latest_ts"]
+
+
+def rule_simulation(ledger=None, emotions=None, rules=None, chase_window_min=60):
+    """Counterfactual 복기 — '이 규칙을 지켰다면 손익이 어땠나'를 장부에 소급 적용한다.
+    규칙: skip_high_price(80¢+ 진입 스킵) · cap_size(감정 한도 초과분 비례 축소) ·
+    no_chase(추격 재진입 스킵) · stop_after_losses(2연패 후 당일 신규 진입 중단).
+    근사 가정 — 스킵된 거래가 이후 행동에 미치는 연쇄 효과는 반영하지 않는다. Fails soft."""
+    empty = {"n": 0, "actual_total": 0.0, "limit": 0.0, "rules": {},
+             "combined": {"total": 0.0, "delta": 0.0, "skipped": 0, "capped": 0},
+             "daily": []}
+    try:
+        enabled = tuple(rules) if rules is not None else RULE_SIM_RULES
+        recs = _ledger_recs_for_analysis(ledger, emotions, chase_window_min)
+        if not recs:
+            return empty
+        el = max(_safe_float(profile().get("emotional_limit"), 0.0), 0.0)
+        _mark_stopped_after_losses(recs)
+
+        def sim_pnl(r, ruleset):
+            if "skip_high_price" in ruleset and r["avg_buy_price"] >= 80.0:
+                return 0.0, "skip"
+            if "no_chase" in ruleset and r["_chase"]:
+                return 0.0, "skip"
+            if "stop_after_losses" in ruleset and r.get("_stopped"):
+                return 0.0, "skip"
+            if "cap_size" in ruleset and el > 0 and r["buy_cost"] > el:
+                return r["pnl"] * (el / r["buy_cost"]), "cap"
+            return r["pnl"], ""
+
+        actual = sum(r["pnl"] for r in recs)
+        out = {"n": len(recs), "actual_total": round(actual, 2), "limit": el, "rules": {}}
+        for rule in RULE_SIM_RULES:  # 규칙 하나만 지켰다면
+            tot, aff = 0.0, 0
+            for r in recs:
+                p, kind = sim_pnl(r, (rule,))
+                tot += p
+                if kind:
+                    aff += 1
+            out["rules"][rule] = {"total": round(tot, 2), "delta": round(tot - actual, 2),
+                                  "affected": aff, "enabled": rule in enabled}
+        ctot, skipped, capped, sims = 0.0, 0, 0, {}
+        for r in recs:  # 켜진 규칙 전부 지켰다면
+            p, kind = sim_pnl(r, enabled)
+            sims[r["key"]] = p
+            ctot += p
+            if kind == "skip":
+                skipped += 1
+            elif kind == "cap":
+                capped += 1
+        out["combined"] = {"total": round(ctot, 2), "delta": round(ctot - actual, 2),
+                           "skipped": skipped, "capped": capped}
+        by_day = {}
+        for r in recs:  # 일별 누적 비교 (자산 곡선용)
+            if not r.get("date"):
+                continue
+            a, s = by_day.get(r["date"], (0.0, 0.0))
+            by_day[r["date"]] = (a + r["pnl"], s + sims[r["key"]])
+        ca, cs, daily = 0.0, 0.0, []
+        for d0 in sorted(by_day):
+            ca += by_day[d0][0]
+            cs += by_day[d0][1]
+            daily.append({"date": d0, "actual": round(ca, 2), "ruled": round(cs, 2)})
+        out["daily"] = daily
         return out
     except Exception:
         return empty
@@ -1575,6 +1678,10 @@ __all__ = [
     'update_trade_ledger',
     'resolve_trade_row',
     'behavior_insights',
+    '_ledger_recs_for_analysis',
+    '_mark_stopped_after_losses',
+    'RULE_SIM_RULES',
+    'rule_simulation',
     'performance_summary',
     'visible_portfolio_positions',
 ]

@@ -2105,6 +2105,8 @@ with tab_review:
 
     # 감정·행동 복기 인사이트 — 계좌 생존의 핵심 지표라 복기 목록보다 먼저 보여준다.
     render_behavior_insights()
+    # 규칙 시뮬레이터 — "지켰다면 얼마였나"로 인사이트를 행동 변화로 연결한다.
+    render_rule_simulator()
     st.markdown("<hr>", unsafe_allow_html=True)
 
     review_items = st.session_state.get("reviews", []) or []
