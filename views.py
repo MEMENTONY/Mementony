@@ -664,6 +664,63 @@ def render_behavior_insights(key_prefix="bi"):
     st.markdown(f'<div class="footnote">{t(f"감정·추격 태그는 거래일지 → 손익 계산 박스에서 기록합니다. 추격 자동감지 = 손실 정산 후 {_win}분 내 첫 매수.", f"Tag emotion/chase in Journal → P&L box. Chase auto-detect = first buy within {_win} min after a loss settles.")}</div>', unsafe_allow_html=True)
 
 
+def render_rule_simulator(key_prefix="rs"):
+    """규칙 시뮬레이터 — '이 규칙을 지켰다면 얼마였나'를 실제 장부에 소급 적용해 보여준다."""
+    st.markdown(f'<div class="eyebrow" style="margin-top:18px;">{t("규칙 시뮬레이터 — 지켰다면 얼마였나", "Rule simulator — what if you had followed the rules")}</div>', unsafe_allow_html=True)
+    _rule_lbl = {
+        "skip_high_price": t("80¢+ 진입 스킵", "Skip 80¢+ entries"),
+        "cap_size": t("사이즈 캡 (감정 한도)", "Cap size (emotional limit)"),
+        "no_chase": t("추격 재진입 금지", "No chase re-entries"),
+        "stop_after_losses": t("2연패 후 당일 중단", "Stop day after 2 losses"),
+    }
+    cols = st.columns(len(RULE_SIM_RULES))
+    enabled = []
+    for i, rule in enumerate(RULE_SIM_RULES):
+        with cols[i]:
+            if st.checkbox(_rule_lbl[rule], value=True, key=f"{key_prefix}_rule_{rule}"):
+                enabled.append(rule)
+    sim = rule_simulation(rules=enabled)
+    if not sim["n"]:
+        st.markdown(line(t("확정된 거래가 쌓이면 규칙별 가상 손익을 비교할 수 있습니다.",
+                           "Once settled trades accumulate, per-rule counterfactual P&L appears here."), "i"), unsafe_allow_html=True)
+        return
+    comb = sim["combined"]
+    delta_tone = "pos" if comb["delta"] >= 0 else "neg"
+    st.markdown(
+        '<div class="stats">'
+        + stat(t("실제 손익", "Actual P&L"), signed_money(sim["actual_total"]),
+               t(f'{sim["n"]}건 (장부 기준)', f'{sim["n"]} trades'),
+               "pos" if sim["actual_total"] >= 0 else "neg")
+        + stat(t("규칙 준수 시", "If rules followed"), signed_money(comb["total"]),
+               t(f'켠 규칙 {len(enabled)}개 적용', f'{len(enabled)} rules applied'),
+               "pos" if comb["total"] >= 0 else "neg")
+        + stat(t("차이 (규칙의 값어치)", "Difference (value of rules)"), signed_money(comb["delta"]),
+               t("규칙 준수 − 실제", "ruled − actual"), delta_tone)
+        + stat(t("영향 거래", "Affected trades"), f'{comb["skipped"] + comb["capped"]}',
+               t(f'스킵 {comb["skipped"]} · 축소 {comb["capped"]}', f'skip {comb["skipped"]} · cap {comb["capped"]}'))
+        + "</div>", unsafe_allow_html=True)
+    cells = ""
+    for rule in RULE_SIM_RULES:  # 규칙 '하나만' 지켰다면 — 어떤 규칙이 가장 값진지
+        rr = sim["rules"][rule]
+        tone = "pos" if rr["delta"] >= 0 else "neg"
+        cells += (f'<div class="pf-metric"><div class="k">{esc(_rule_lbl[rule])} · {rr["affected"]}건</div>'
+                  f'<div class="v {tone}">{signed_money(rr["delta"])}</div></div>')
+    st.markdown(f'<div class="eyebrow" style="margin-top:10px;">{t("규칙 하나만 지켰다면 (개별 효과)", "One rule alone (individual effect)")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="pf-metrics">{cells}</div>', unsafe_allow_html=True)
+    daily = sim["daily"]
+    if len(daily) >= 2:
+        _lbl_actual = t("실제", "Actual")
+        _lbl_ruled = t("규칙 준수", "Rules followed")
+        _df = pd.DataFrame(daily).rename(columns={"actual": _lbl_actual, "ruled": _lbl_ruled})
+        # 팔레트는 validate_palette 통과: 실제=#a45e07(앰버) · 규칙 준수=#2e7cf6(파랑)
+        st.line_chart(_df, x="date", y=[_lbl_actual, _lbl_ruled],
+                      color=["#a45e07", "#2e7cf6"], height=260)
+        with st.expander(t("일별 누적 데이터 표", "Daily cumulative table")):
+            st.dataframe(_df.rename(columns={"date": t("날짜", "Date")}), width="stretch", hide_index=True)
+    _lim_txt = money(sim["limit"]) if sim["limit"] > 0 else t("미설정", "not set")
+    st.markdown(f'<div class="footnote">{t(f"근사치입니다 — 스킵한 거래가 이후 판단에 미치는 연쇄 효과는 반영하지 않으며, 사이즈 캡은 손익을 (한도 {_lim_txt} ÷ 매수금)으로 비례 축소합니다. 시각 정보가 없는 옛 장부 행은 ‘2연패 중단’ 판정에서 제외됩니다.", f"Approximation — knock-on effects of skipped trades are not modeled; size cap scales P&L by (limit {_lim_txt} ÷ cost). Old ledger rows without timestamps are excluded from the stop rule.")}</div>', unsafe_allow_html=True)
+
+
 def render_trade_event_cards(events, title=None):
     events = [ev for ev in (events or []) if isinstance(ev, dict) and not ev.get("_linked_to")]
     if not events:
@@ -1397,6 +1454,7 @@ __all__ = [
     'render_entry_result',
     'render_live_price_panel',
     'render_behavior_insights',
+    'render_rule_simulator',
     'render_performance_summary',
     'render_profile_pnl_dashboard',
     'render_trade_date_controls',
