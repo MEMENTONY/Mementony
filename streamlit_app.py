@@ -1914,6 +1914,8 @@ with tab4:
             file_name="memento_trade_ledger.csv", mime="text/csv",
             width="stretch", key="ledger_download_btn")
     render_performance_summary()
+    # 자산 곡선 + 일별 손익 캘린더 — 추세와 '폭발한 날'을 한눈에.
+    render_equity_section()
     st.markdown("<hr>", unsafe_allow_html=True)
 
     if st.session_state.get("journal_mode") not in ("wallet", "paste"):
@@ -2103,6 +2105,8 @@ with tab_review:
         unsafe_allow_html=True,
     )
 
+    # 주간 리포트 — 이번 주가 지난주보다 나은지부터 확인한다.
+    render_weekly_report()
     # 감정·행동 복기 인사이트 — 계좌 생존의 핵심 지표라 복기 목록보다 먼저 보여준다.
     render_behavior_insights()
     # 규칙 시뮬레이터 — "지켰다면 얼마였나"로 인사이트를 행동 변화로 연결한다.

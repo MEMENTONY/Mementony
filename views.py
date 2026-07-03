@@ -664,6 +664,100 @@ def render_behavior_insights(key_prefix="bi"):
     st.markdown(f'<div class="footnote">{t(f"감정·추격 태그는 거래일지 → 손익 계산 박스에서 기록합니다. 추격 자동감지 = 손실 정산 후 {_win}분 내 첫 매수.", f"Tag emotion/chase in Journal → P&L box. Chase auto-detect = first buy within {_win} min after a loss settles.")}</div>', unsafe_allow_html=True)
 
 
+def _heat_color(pnl, scale):
+    """캘린더 셀 색: 수익=초록·손실=빨강(다이버징, 중립=회색), |손익|이 클수록 짙게."""
+    if pnl is None:
+        return "var(--surface-2)"
+    if abs(pnl) < 1e-9:
+        return "#e5e7eb"
+    a = 0.25 + 0.75 * min(abs(pnl) / max(scale, 1e-9), 1.0)
+    return f"rgba(15,122,67,{a:.2f})" if pnl > 0 else f"rgba(197,54,47,{a:.2f})"
+
+
+def render_equity_section(key_prefix="eq"):
+    """자산 곡선(누적 실현손익 + MDD)과 일별 손익 캘린더 — 장부 기준."""
+    eq = equity_curve_data()
+    st.markdown(f'<div class="eyebrow" style="margin-top:14px;">{t("자산 곡선 · 일별 캘린더 (장부 기준)", "Equity curve · daily calendar (ledger)")}</div>', unsafe_allow_html=True)
+    if not eq["days"]:
+        st.markdown(line(t("확정된 거래가 쌓이면 누적 곡선과 일별 캘린더가 표시됩니다.",
+                           "Cumulative curve and daily calendar appear once settled trades accumulate."), "i"), unsafe_allow_html=True)
+        return
+    st.markdown(
+        '<div class="stats">'
+        + stat(t("누적 실현손익", "Cumulative realized"), signed_money(eq["total"]),
+               t(f'{eq["n"]}건 · {eq["days"]}거래일', f'{eq["n"]} trades · {eq["days"]} days'),
+               "pos" if eq["total"] >= 0 else "neg")
+        + stat(t("최고점", "Peak"), signed_money(eq["peak"]), t("누적 기준 고점", "cumulative high"))
+        + stat(t("최대 낙폭 (MDD)", "Max drawdown"), money(-eq["mdd"]) if eq["mdd"] > 0 else "$0.00",
+               eq["mdd_date"] or "", "neg" if eq["mdd"] > 0 else "")
+        + stat(t("고점 대비", "From peak"), signed_money(eq["total"] - eq["peak"]),
+               t("0이면 신고점", "0 = at high"), "pos" if eq["total"] >= eq["peak"] else "neg")
+        + "</div>", unsafe_allow_html=True)
+    _lbl_cum = t("누적 실현손익", "Cumulative realized")
+    _df = pd.DataFrame(eq["daily"]).rename(columns={"cum": _lbl_cum})
+    st.line_chart(_df, x="date", y=_lbl_cum, color="#2e7cf6", height=220)
+    cal = calendar_heatmap_data()
+    if cal["grid"]:
+        wd_lbl = [t("월", "Mon"), "", t("수", "Wed"), "", t("금", "Fri"), "", t("일", "Sun")]
+        rows_html = ""
+        for wd in range(7):
+            cells = ""
+            for wrow in cal["grid"]:
+                c = wrow[wd]
+                if c["future"]:
+                    cells += '<div style="width:14px;height:14px;"></div>'
+                    continue
+                if c["pnl"] is None:
+                    tip = f'{c["date"]} · {t("거래 없음", "no trades")}'
+                else:
+                    tip = f'{c["date"]} · {signed_money(c["pnl"])} · {c["count"]}{t("건", "")}'
+                cells += (f'<div title="{esc(tip)}" style="width:14px;height:14px;border-radius:3px;'
+                          f'background:{_heat_color(c["pnl"], cal["scale"])};"></div>')
+            rows_html += (f'<div style="display:flex;gap:3px;align-items:center;">'
+                          f'<div style="width:26px;font-size:10px;color:var(--gray);text-align:right;padding-right:4px;">{wd_lbl[wd]}</div>'
+                          f'{cells}</div>')
+        _c_start, _c_end = cal["start"], cal["end"]
+        st.markdown(
+            f'<div style="display:flex;flex-direction:column;gap:3px;margin:10px 0 4px 0;">{rows_html}</div>'
+            f'<div class="footnote">{t(f"최근 12주 ({_c_start} ~ {_c_end}) · 초록 수익 / 빨강 손실 · 짙을수록 금액 큼", f"Last 12 weeks ({_c_start} – {_c_end}) · green win / red loss · darker = larger")}</div>',
+            unsafe_allow_html=True)
+    with st.expander(t("일별 손익 데이터 표", "Daily P&L table")):
+        st.dataframe(pd.DataFrame(eq["daily"]).rename(columns={"date": t("날짜", "Date"), "pnl": t("일 손익", "Day P&L")}),
+                     width="stretch", hide_index=True)
+
+
+def render_weekly_report(key_prefix="wr"):
+    """주간 리포트 — 이번 주 vs 지난주 (손익·건수·승률·감정적/규칙위반 손익·최악 카테고리)."""
+    wr = weekly_report()
+    st.markdown(f'<div class="eyebrow" style="margin-top:6px;">{t("주간 리포트 — 이번 주 vs 지난주", "Weekly report — this week vs last")}</div>', unsafe_allow_html=True)
+    if not wr["has_data"]:
+        st.markdown(line(t("이번 주/지난주에 확정된 거래가 없습니다.", "No settled trades this or last week."), "i"), unsafe_allow_html=True)
+        return
+    tw, lw = wr["this"], wr["last"]
+    st.markdown(
+        '<div class="stats">'
+        + stat(t("이번 주 손익", "This week P&L"), signed_money(tw["pnl"]),
+               t(f'지난주 {signed_money(lw["pnl"])} · 대비 {signed_money(wr["delta_pnl"])}',
+                 f'last {signed_money(lw["pnl"])} · Δ {signed_money(wr["delta_pnl"])}'),
+               "pos" if tw["pnl"] >= 0 else "neg")
+        + stat(t("거래 · 승률", "Trades · win rate"), f'{tw["n"]}{t("건", "")} · {tw["win_rate"]:.0f}%',
+               t(f'지난주 {lw["n"]}건 · {lw["win_rate"]:.0f}%', f'last {lw["n"]} · {lw["win_rate"]:.0f}%'))
+        + stat(t("감정적 거래 손익", "Emotional P&L"), signed_money(tw["emotional_pnl"]),
+               t(f'{tw["emotional_n"]}건 · 지난주 {signed_money(lw["emotional_pnl"])}',
+                 f'{tw["emotional_n"]} · last {signed_money(lw["emotional_pnl"])}'),
+               "pos" if tw["emotional_pnl"] >= 0 else "neg")
+        + stat(t("규칙위반 손익", "Violation P&L"), signed_money(tw["violation_pnl"]),
+               t(f'{tw["violation_n"]}건 · 지난주 {signed_money(lw["violation_pnl"])}',
+                 f'{tw["violation_n"]} · last {signed_money(lw["violation_pnl"])}'),
+               "pos" if tw["violation_pnl"] >= 0 else "neg")
+        + "</div>", unsafe_allow_html=True)
+    if tw["worst_category"]:
+        st.markdown(line(t(f'이번 주 최대 손실 카테고리: {tw["worst_category"]} {signed_money(tw["worst_category_pnl"])}',
+                           f'Worst category this week: {tw["worst_category"]} {signed_money(tw["worst_category_pnl"])}'), "w"), unsafe_allow_html=True)
+    _tw_start = wr["this_start"]
+    st.markdown(f'<div class="footnote">{t(f"이번 주 = {_tw_start}(월)부터 오늘까지 · 장부 정산일 기준", f"This week = {_tw_start} (Mon) to today · by ledger settle date")}</div>', unsafe_allow_html=True)
+
+
 def render_rule_simulator(key_prefix="rs"):
     """규칙 시뮬레이터 — '이 규칙을 지켰다면 얼마였나'를 실제 장부에 소급 적용해 보여준다."""
     st.markdown(f'<div class="eyebrow" style="margin-top:18px;">{t("규칙 시뮬레이터 — 지켰다면 얼마였나", "Rule simulator — what if you had followed the rules")}</div>', unsafe_allow_html=True)
@@ -1455,6 +1549,9 @@ __all__ = [
     'render_live_price_panel',
     'render_behavior_insights',
     'render_rule_simulator',
+    '_heat_color',
+    'render_equity_section',
+    'render_weekly_report',
     'render_performance_summary',
     'render_profile_pnl_dashboard',
     'render_trade_date_controls',
