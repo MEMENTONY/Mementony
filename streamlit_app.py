@@ -938,7 +938,7 @@ try:
         st.session_state._wallet_autosynced = True
         _wa = str(st.session_state.get("wallet_addr", "") or "").strip()
         if _wa.startswith("0x") and len(_wa) == 42:
-            _auto = sync_wallet_full(_wa, limit=100, force=False)
+            _auto = sync_wallet_full(_wa, limit=200, force=False)
             if _auto.get("ok") and (_auto.get("added") or _auto.get("resolved_won") or _auto.get("resolved_lost")):
                 _parts = []
                 if _auto.get("added"):
@@ -1706,6 +1706,15 @@ with st.sidebar:
                 st.rerun()
 
 st.markdown(today_dashboard_html(today_operating_metrics()), unsafe_allow_html=True)
+
+# 데이터 유실 위험 배너 — 장부가 쌓였는데 시트 백업(전체 상태)이 없으면 재배포 때 잃는다.
+try:
+    if ((st.session_state.get("trade_ledger") or st.session_state.get("auto_trades"))
+            and (not gsheet_webapp_endpoint() or not str(st.session_state.get("state_backup_last_at", "") or ""))):
+        st.markdown(line(t("⚠️ 재배포되면 기록(승/패 확정·감정·복기)이 사라질 수 있어요 — 설정·도구 탭에서 구글시트 백업(Apps Script v3 + Secrets)을 설정하고 ‘지금 전체 상태 백업’을 한 번 눌러주세요.",
+                           "⚠️ A redeploy can wipe your records — set up Google Sheets backup (Apps Script v3 + Secrets) in Settings and press ‘Back up full state now’ once."), "w"), unsafe_allow_html=True)
+except Exception:
+    pass
 
 tab1, _tab_pf_top, tab_rec, tab_ai, tab_set = st.tabs([
     t("진입 판독", "Entry check"),
@@ -2764,6 +2773,9 @@ gsheet_webapp_url = "https://script.google.com/macros/s/..../exec"
         placeholder=t("코드의 SECRET과 같은 값 (비워도 됨)", "same as SECRET in the code (optional)"),
         key="gsheet_webapp_token_input",
     )
+    if gsheet_webapp_endpoint() and not gsheet_webapp_secret():
+        st.markdown(line(t("공유 토큰이 비어 있어요 — URL만 알면 누구나 시트에 읽고 쓸 수 있습니다. 코드의 SECRET과 위 토큰을 같은 값으로 두는 걸 권장해요.",
+                           "No shared token — anyone with the URL can read/write the sheet. Set SECRET in the script and the token above to the same value."), "w"), unsafe_allow_html=True)
 
     st.session_state.gsheet_autobackup = st.checkbox(
         t("자동 백업 (장부가 바뀔 때마다)", "Auto-backup (whenever the ledger changes)"),
@@ -2873,6 +2885,31 @@ gsheet_webapp_url = "https://script.google.com/macros/s/..../exec"
         value=bool(st.session_state.get("dev_mode", False)),
         help=t("일반 사용 시 꺼두면 포트폴리오와 거래내역 화면이 더 깔끔해집니다.", "Keep this off for a cleaner portfolio and journal UI."),
     )
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    # ---- behavior analysis thresholds ----
+    st.markdown(f'<div class="eyebrow">{t("행동 분석 기준", "Behavior analysis thresholds")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footnote" style="margin:0 0 8px 0;">{t("행동 인사이트·규칙 시뮬레이터·주간 리포트가 함께 쓰는 기준입니다.", "Shared by Behavior insights, Rule simulator and Weekly report.")}</div>', unsafe_allow_html=True)
+    _bp1, _bp2, _bp3 = st.columns(3)
+    with _bp1:
+        st.session_state.insight_chase_window = st.number_input(
+            t("추격 감지 창 (분)", "Chase window (min)"), 1, 720,
+            int(_safe_float(st.session_state.get("insight_chase_window"), 60) or 60), step=5,
+            key="insight_chase_window_input",
+            help=t("손실 정산 후 이 시간 안의 첫 매수를 추격으로 자동 감지", "First buy within this window after a loss settles = chase"))
+    with _bp2:
+        st.session_state.insight_high_price_cents = st.number_input(
+            t("고가 진입 기준 (¢)", "High-price entry (¢)"), 50.0, 99.0,
+            float(_safe_float(st.session_state.get("insight_high_price_cents"), 80.0) or 80.0), step=1.0,
+            key="insight_high_price_input",
+            help=t("이 가격 이상 진입을 규칙위반으로 집계/스킵", "Entries at or above this price count as violations / get skipped"))
+    with _bp3:
+        st.session_state.insight_stop_streak = st.number_input(
+            t("당일 중단 연패 수", "Stop-day loss streak"), 1, 10,
+            int(_safe_float(st.session_state.get("insight_stop_streak"), 2) or 2), step=1,
+            key="insight_stop_streak_input",
+            help=t("규칙 시뮬레이터의 ‘N연패 후 당일 중단’ 기준", "N for the simulator’s ‘stop day after N losses’ rule"))
 
     st.markdown("<hr>", unsafe_allow_html=True)
 

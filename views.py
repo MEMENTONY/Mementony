@@ -634,7 +634,8 @@ def render_behavior_insights(key_prefix="bi"):
                  f'{chase["n"]} · auto {chase["detected"]} · flagged {chase["flagged"]}'),
                "pos" if chase["pnl"] >= 0 else "neg")
         + stat(t("규칙위반 손익", "Rule-violation P&L"), signed_money(viol["pnl"]),
-               t(f'{viol["n"]}건 · 80¢+ 진입/과대베팅', f'{viol["n"]} · 80¢+ entry/oversized'),
+               t(f'{viol["n"]}건 · {ins["high_price"]["threshold"]:.0f}¢+ 진입/과대베팅',
+                 f'{viol["n"]} · {ins["high_price"]["threshold"]:.0f}¢+ entry/oversized'),
                "pos" if viol["pnl"] >= 0 else "neg")
         + stat(t("감정 기록", "Emotion tags"), f'{emo_n}/{ins["n"]}', corr_note)
         + "</div>", unsafe_allow_html=True)
@@ -656,9 +657,10 @@ def render_behavior_insights(key_prefix="bi"):
     hp, ov = ins["high_price"], ins["oversized"]
     if hp["n"] or ov["n"]:
         _lim_txt = money(ov["limit"]) if ov["limit"] > 0 else t("미설정", "not set")
+        _hp_thr = hp["threshold"]
         st.markdown(line(t(
-            f'80¢ 이상 진입 {hp["n"]}건 {signed_money(hp["pnl"])} · 과대베팅(감정 한도 {_lim_txt} 초과) {ov["n"]}건 {signed_money(ov["pnl"])}',
-            f'Entries at 80¢+ {hp["n"]} {signed_money(hp["pnl"])} · oversized (> emotional limit {_lim_txt}) {ov["n"]} {signed_money(ov["pnl"])}'),
+            f'{_hp_thr:.0f}¢ 이상 진입 {hp["n"]}건 {signed_money(hp["pnl"])} · 과대베팅(감정 한도 {_lim_txt} 초과) {ov["n"]}건 {signed_money(ov["pnl"])}',
+            f'Entries at {_hp_thr:.0f}¢+ {hp["n"]} {signed_money(hp["pnl"])} · oversized (> emotional limit {_lim_txt}) {ov["n"]} {signed_money(ov["pnl"])}'),
             "w" if (hp["pnl"] + ov["pnl"]) < 0 else "i"), unsafe_allow_html=True)
     _win = int(ins["window_min"])
     st.markdown(f'<div class="footnote">{t(f"감정·추격 태그는 거래일지 → 손익 계산 박스에서 기록합니다. 추격 자동감지 = 손실 정산 후 {_win}분 내 첫 매수.", f"Tag emotion/chase in Journal → P&L box. Chase auto-detect = first buy within {_win} min after a loss settles.")}</div>', unsafe_allow_html=True)
@@ -761,11 +763,12 @@ def render_weekly_report(key_prefix="wr"):
 def render_rule_simulator(key_prefix="rs"):
     """규칙 시뮬레이터 — '이 규칙을 지켰다면 얼마였나'를 실제 장부에 소급 적용해 보여준다."""
     st.markdown(f'<div class="eyebrow" style="margin-top:18px;">{t("규칙 시뮬레이터 — 지켰다면 얼마였나", "Rule simulator — what if you had followed the rules")}</div>', unsafe_allow_html=True)
+    _bp = _insight_params()
     _rule_lbl = {
-        "skip_high_price": t("80¢+ 진입 스킵", "Skip 80¢+ entries"),
+        "skip_high_price": t(f'{_bp["high_price"]:.0f}¢+ 진입 스킵', f'Skip {_bp["high_price"]:.0f}¢+ entries'),
         "cap_size": t("사이즈 캡 (감정 한도)", "Cap size (emotional limit)"),
         "no_chase": t("추격 재진입 금지", "No chase re-entries"),
-        "stop_after_losses": t("2연패 후 당일 중단", "Stop day after 2 losses"),
+        "stop_after_losses": t(f'{_bp["streak"]}연패 후 당일 중단', f'Stop day after {_bp["streak"]} losses'),
     }
     cols = st.columns(len(RULE_SIM_RULES))
     enabled = []

@@ -42,7 +42,14 @@ solo = {"s1": {"market": "S", "outcome": "X", "pnl": -10.0, "updated_at": "1",
                "avg_buy_price": 50.0, "buy_cost": 10.0, "first_ts": 5000.0, "latest_ts": 5000.0}}
 ins_solo = behavior_insights(solo, {})
 assert ins_solo["chase"]["n"] == 0 and ins_solo["chase"]["detected"] == 0, ins_solo["chase"]
-print("1) behavior_insights 계산 OK (자기추격 회귀 포함)")
+# 설정 파라미터 반응: 추격 창 10분이면 k2(1000초=16.7분 뒤 진입)는 추격 아님, 고가 기준 50¢면 3건 전부 위반
+st.session_state.insight_chase_window = 10
+st.session_state.insight_high_price_cents = 50.0
+ins_p = behavior_insights(ledger, emotions)   # window 인자 생략 → 설정값 사용
+assert ins_p["window_min"] == 10 and ins_p["chase"]["detected"] == 0, (ins_p["window_min"], ins_p["chase"])
+assert ins_p["high_price"]["threshold"] == 50.0 and ins_p["high_price"]["n"] == 3, ins_p["high_price"]
+del st.session_state["insight_chase_window"], st.session_state["insight_high_price_cents"]
+print("1) behavior_insights 계산 OK (자기추격 회귀 + 설정 파라미터 포함)")
 
 # ---------- 2) AppTest: 시드 상태로 부팅 → 장부 확장 필드 + 인사이트 렌더 ----------
 from streamlit.testing.v1 import AppTest
