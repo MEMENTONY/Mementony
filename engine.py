@@ -1175,7 +1175,18 @@ def performance_summary(ledger=None):
                 "gross_win": 0.0, "gross_loss": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
                 "profit_factor": None, "by_category": {}}
 
-def _ledger_recs_for_analysis(ledger=None, emotions=None, chase_window_min=60):
+def _insight_params():
+    """행동 분석 파라미터 — 설정·도구에서 조절: 추격 감지 창(분) · 고가 진입 기준(¢) · 연패 중단 기준."""
+    try:
+        w = int(_safe_float(st.session_state.get("insight_chase_window"), 60) or 60)
+        hp = _safe_float(st.session_state.get("insight_high_price_cents"), 80.0) or 80.0
+        stk = int(_safe_float(st.session_state.get("insight_stop_streak"), 2) or 2)
+        return {"window": max(w, 1), "high_price": min(max(hp, 50.0), 99.0), "streak": max(stk, 1)}
+    except Exception:
+        return {"window": 60, "high_price": 80.0, "streak": 2}
+
+
+def _ledger_recs_for_analysis(ledger=None, emotions=None, chase_window_min=None):
     """장부(dedupe)+감정 태그를 분석용 rec 리스트로 만든다 — behavior_insights와
     rule_simulation이 공유. 추격 자동감지까지 계산해 _chase/_chase_detected를 채운다."""
     led = ledger if isinstance(ledger, dict) else (st.session_state.get("trade_ledger") or {})
@@ -1207,6 +1218,8 @@ def _ledger_recs_for_analysis(ledger=None, emotions=None, chase_window_min=60):
             "buy_cost": _safe_float(v.get("buy_cost"), -1.0),
         })
     # 추격 자동감지: (다른) 손실 거래의 정산 후 window분 내 첫 매수. 자기 자신은 제외.
+    if chase_window_min is None:
+        chase_window_min = _insight_params()["window"]
     window = max(_safe_float(chase_window_min, 0.0), 0.0) * 60.0
     loss_times = [(r["key"], r["latest_ts"]) for r in recs if r["pnl"] < 0 and r["latest_ts"] > 0]
     for r in recs:
@@ -1217,7 +1230,7 @@ def _ledger_recs_for_analysis(ledger=None, emotions=None, chase_window_min=60):
     return recs
 
 
-def behavior_insights(ledger=None, emotions=None, chase_window_min=60):
+def behavior_insights(ledger=None, emotions=None, chase_window_min=None):
     """감정·행동 복기 인사이트 — '감정적일 때 얼마 잃는지'를 숫자로 만든다.
     trade_ledger(확정 손익)와 trade_emotions(감정 1 침착~5 틸트 · 추격 플래그)를 그룹 key로 조인해
     ① 감정점수×손익, ② 손실 정산 직후 재진입(추격, window 분 이내 첫 매수 자동감지 + 수동 플래그),
@@ -1225,11 +1238,14 @@ def behavior_insights(ledger=None, emotions=None, chase_window_min=60):
     empty = {"n": 0, "tagged": 0, "by_emotion": {}, "corr": None,
              "calm": {"n": 0, "pnl": 0.0}, "tilt": {"n": 0, "pnl": 0.0},
              "chase": {"n": 0, "pnl": 0.0, "wins": 0, "flagged": 0, "detected": 0},
-             "high_price": {"n": 0, "pnl": 0.0, "threshold": 80.0},
+             "high_price": {"n": 0, "pnl": 0.0, "threshold": _insight_params()["high_price"]},
              "oversized": {"n": 0, "pnl": 0.0, "limit": 0.0},
              "violation": {"n": 0, "pnl": 0.0}, "emotional": {"n": 0, "pnl": 0.0},
-             "window_min": chase_window_min}
+             "window_min": chase_window_min if chase_window_min is not None else _insight_params()["window"]}
     try:
+        if chase_window_min is None:
+            chase_window_min = _insight_params()["window"]
+        empty["window_min"] = chase_window_min
         recs = _ledger_recs_for_analysis(ledger, emotions, chase_window_min)
         if not recs:
             return empty
@@ -1333,7 +1349,7 @@ def _mark_stopped_after_losses(recs, streak_to_stop=2):
                 cutoff = r["latest_ts"]
 
 
-def rule_simulation(ledger=None, emotions=None, rules=None, chase_window_min=60):
+def rule_simulation(ledger=None, emotions=None, rules=None, chase_window_min=None):
     """Counterfactual 복기 — '이 규칙을 지켰다면 손익이 어땠나'를 장부에 소급 적용한다.
     규칙: skip_high_price(80¢+ 진입 스킵) · cap_size(감정 한도 초과분 비례 축소) ·
     no_chase(추격 재진입 스킵) · stop_after_losses(2연패 후 당일 신규 진입 중단).
@@ -1342,15 +1358,18 @@ def rule_simulation(ledger=None, emotions=None, rules=None, chase_window_min=60)
              "combined": {"total": 0.0, "delta": 0.0, "skipped": 0, "capped": 0},
              "daily": []}
     try:
+        params = _insight_params()
+        if chase_window_min is None:
+            chase_window_min = params["window"]
         enabled = tuple(rules) if rules is not None else RULE_SIM_RULES
         recs = _ledger_recs_for_analysis(ledger, emotions, chase_window_min)
         if not recs:
             return empty
         el = max(_safe_float(profile().get("emotional_limit"), 0.0), 0.0)
-        _mark_stopped_after_losses(recs)
+        _mark_stopped_after_losses(recs, streak_to_stop=params["streak"])
 
         def sim_pnl(r, ruleset):
-            if "skip_high_price" in ruleset and r["avg_buy_price"] >= 80.0:
+            if "skip_high_price" in ruleset and r["avg_buy_price"] >= params["high_price"]:
                 return 0.0, "skip"
             if "no_chase" in ruleset and r["_chase"]:
                 return 0.0, "skip"
@@ -1470,6 +1489,7 @@ def weekly_report(now=None, ledger=None, emotions=None):
     try:
         recs = _ledger_recs_for_analysis(ledger, emotions)
         el = max(_safe_float(profile().get("emotional_limit"), 0.0), 0.0)
+        _hp = _insight_params()["high_price"]
         today = now or datetime.now(KST).date()
         this_mon = today - timedelta(days=today.weekday())
         last_mon = this_mon - timedelta(days=7)
@@ -1498,7 +1518,7 @@ def weekly_report(now=None, ledger=None, emotions=None):
             if r["emotion"] >= 4 or r["_chase"]:
                 b["emotional_pnl"] += r["pnl"]
                 b["emotional_n"] += 1
-            if r["avg_buy_price"] >= 80.0 or (el > 0 and r["buy_cost"] > el):
+            if r["avg_buy_price"] >= _hp or (el > 0 and r["buy_cost"] > el):
                 b["violation_pnl"] += r["pnl"]
                 b["violation_n"] += 1
             cat = r.get("category") or t("기타", "Other")
@@ -1799,6 +1819,7 @@ __all__ = [
     'update_trade_ledger',
     'resolve_trade_row',
     'behavior_insights',
+    '_insight_params',
     '_ledger_recs_for_analysis',
     '_mark_stopped_after_losses',
     'RULE_SIM_RULES',

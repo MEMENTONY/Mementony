@@ -1583,6 +1583,7 @@ def backup_state_via_webapp():
         if not ok_resp:
             return {"ok": False, "error": f"webapp: {txt[:140]}"}
         st.session_state["_gsheet_state_last_backup"] = payload["saved_at"]
+        st.session_state["state_backup_last_at"] = payload["saved_at"]  # 영구 저장 → 유실 위험 배너 판단용
         return {"ok": True, "error": ""}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}

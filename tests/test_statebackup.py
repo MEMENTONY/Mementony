@@ -52,6 +52,7 @@ with patch("urllib.request.urlopen", side_effect=fake_post):
     r = d.backup_state_via_webapp()
 assert r["ok"], r
 assert cap["data"]["token"] == "tok" and "saved_at" in cap["data"]
+assert st.session_state["state_backup_last_at"] == cap["data"]["saved_at"]  # 영구 키 (유실 배너 판단)
 posted_state = json.loads(cap["data"]["state"])
 assert posted_state["cash"] == 999.0
 
