@@ -449,9 +449,11 @@ def group_auto_trades_for_pnl(auto_trades):
             "market": title, "outcome": outcome, "token_id": tok,
             "bought_shares": 0.0, "sold_shares": 0.0,
             "buy_cost": 0.0, "sell_proceeds": 0.0, "fills": 0,
-            "latest_dt": None, "first_dt": None,
+            "latest_dt": None, "first_dt": None, "combo": False,
         })
         g["fills"] += 1
+        if tr.get("combo"):
+            g["combo"] = True  # 콤보(팔레이): 가격이 합성값(100¢)이라 가격 기반 분석에서 제외
         dt = parse_trade_datetime(tr)
         if dt is not None and (g["latest_dt"] is None or dt > g["latest_dt"]):
             g["latest_dt"] = dt
@@ -485,6 +487,7 @@ def group_auto_trades_for_pnl(auto_trades):
         first_dt = g.get("first_dt")
         rows.append({
             "key": key, "market": g["market"], "outcome": g["outcome"], "token_id": g["token_id"],
+            "combo": bool(g.get("combo")),
             "first_dt": first_dt.isoformat(timespec="minutes") if first_dt else "",
             "_first_ts": first_dt.timestamp() if first_dt else -1,
             "avg_buy_price": round(avg_buy * 100, 2) if avg_buy <= 1 and avg_buy > 0 else round(avg_buy, 2),
@@ -1118,6 +1121,7 @@ def update_trade_ledger():
                     "source": label,
                     # 행동 인사이트 재료: 진입가·매수금(규칙위반 판정)과 첫/마지막 체결시각(추격 감지)
                     "avg_buy_price": _safe_float(r.get("avg_buy_price"), 0.0),
+                    "combo": bool(r.get("combo")),
                     "buy_cost": round(_safe_float(r.get("buy_cost"), 0.0), 2),
                     "first_ts": _safe_float(r.get("_first_ts"), -1.0),
                     "latest_ts": _safe_float(r.get("_latest_ts"), -1.0),
@@ -1210,6 +1214,7 @@ def _ledger_recs_for_analysis(ledger=None, emotions=None, chase_window_min=None)
             "key": k, "pnl": _safe_float(v.get("pnl"), 0.0),
             "date": str(v.get("date", "") or "")[:10],
             "category": str(v.get("category", "") or ""),
+            "combo": bool(v.get("combo")),
             "emotion": e if 1 <= e <= 5 else 0,
             "chase_flag": bool(tag.get("chase")),
             "first_ts": _safe_float(v.get("first_ts"), -1.0),
@@ -1299,7 +1304,8 @@ def behavior_insights(ledger=None, emotions=None, chase_window_min=None):
         out["oversized"]["limit"] = el
         viol = set()
         for r in recs:
-            if r["avg_buy_price"] >= out["high_price"]["threshold"]:
+            # 콤보는 가격이 합성값(100¢)이라 고가 진입 판정에서 제외 (과대베팅은 원가 기준이라 그대로 적용)
+            if not r.get("combo") and r["avg_buy_price"] >= out["high_price"]["threshold"]:
                 out["high_price"]["n"] += 1
                 out["high_price"]["pnl"] += r["pnl"]
                 viol.add(r["key"])
@@ -1369,7 +1375,7 @@ def rule_simulation(ledger=None, emotions=None, rules=None, chase_window_min=Non
         _mark_stopped_after_losses(recs, streak_to_stop=params["streak"])
 
         def sim_pnl(r, ruleset):
-            if "skip_high_price" in ruleset and r["avg_buy_price"] >= params["high_price"]:
+            if "skip_high_price" in ruleset and not r.get("combo") and r["avg_buy_price"] >= params["high_price"]:
                 return 0.0, "skip"
             if "no_chase" in ruleset and r["_chase"]:
                 return 0.0, "skip"
@@ -1518,7 +1524,7 @@ def weekly_report(now=None, ledger=None, emotions=None):
             if r["emotion"] >= 4 or r["_chase"]:
                 b["emotional_pnl"] += r["pnl"]
                 b["emotional_n"] += 1
-            if r["avg_buy_price"] >= _hp or (el > 0 and r["buy_cost"] > el):
+            if (not r.get("combo") and r["avg_buy_price"] >= _hp) or (el > 0 and r["buy_cost"] > el):
                 b["violation_pnl"] += r["pnl"]
                 b["violation_n"] += 1
             cat = r.get("category") or t("기타", "Other")

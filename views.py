@@ -468,7 +468,7 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
   <div class="pf-card-head">
     <div>
       <div class="pf-title">{esc(r.get("market"))}</div>
-      <div class="pf-pills">{outcome_pill(r.get("outcome"))}{cents_pill(r.get("avg_buy_price", 0))}</div>
+      <div class="pf-pills">{outcome_pill(r.get("outcome"))}{"" if r.get("combo") else cents_pill(r.get("avg_buy_price", 0))}</div>
       <div class="pf-sub">{esc(latest)} · {esc(status_text)}</div>
     </div>
     <div style="text-align:right;min-width:96px;">
@@ -477,7 +477,7 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
     </div>
   </div>
   <div class="pf-metrics">
-    <div class="pf-metric"><div class="k">{t("평균 매수", "Avg buy")}</div><div class="v">{cents(r.get("avg_buy_price", 0))}</div></div>
+    <div class="pf-metric"><div class="k">{t("평균 매수", "Avg buy")}</div><div class="v">{t("콤보", "Combo") if r.get("combo") else cents(r.get("avg_buy_price", 0))}</div></div>
     <div class="pf-metric"><div class="k">{t("평균 청산", "Avg exit")}</div><div class="v">{cents(exit_price) if closed_shares > 0 else "—"}</div></div>
     <div class="pf-metric"><div class="k">{t("매수/청산 수량", "Bought/Closed")}</div><div class="v">{r.get("bought_shares", 0):.2f} / {closed_shares:.2f}</div></div>
     <div class="pf-metric"><div class="k">{t("매수금/회수금", "Cost/Recovered")}</div><div class="v">{money(r.get("buy_cost", 0))} / {money(r.get("adjusted_effective_proceeds", r.get("sell_proceeds", 0)))}</div></div>
