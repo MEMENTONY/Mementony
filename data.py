@@ -755,6 +755,11 @@ def normalize_activity(raw):
         size = _safe_float(it.get("size") or it.get("shares") or it.get("outcomeTokens"), 0)
         usdc = _safe_float(it.get("usdcSize") or it.get("usdValue") or it.get("amount"), 0)
         amount = usdc if usdc > 0 else size * (price_c / 100 if price_c else 0)
+        combo = False
+        if size <= 0 and price_c <= 0 and usdc > 0:
+            # 콤보(팔레이) 등 수량·가격 없이 금액만 오는 체결 — 원가(금액) 기준으로 복원.
+            # 원가·패배 손익은 정확하고 승리는 상환 이벤트 금액으로 정산된다. (combo 플래그로 가격 분석 제외)
+            size, price_c, combo = usdc, 100.0, True
         tx_base = it.get("transactionHash") or it.get("transaction_hash") or it.get("hash") or ""
         asset = _activity_asset(it)
         tx_id = "|".join([str(tx_base), str(asset), str(_activity_time_value(it) or ""), side, str(size), str(price_raw)])
@@ -769,6 +774,7 @@ def normalize_activity(raw):
             "amount": round(amount, 2),
             "asset": str(asset),
             "token_id": str(asset),
+            "combo": combo,
         })
     return rows
 
@@ -1057,6 +1063,16 @@ def parse_pasted_activity(text):
         if not title and content_lines:
             title = _clean_title(content_lines[0].strip())
 
+        def _is_meta_line(ln):
+            return bool(amount_re.match(ln) or re.fullmatch(r"[-—–]", ln)
+                        or rel_re.search(ln) or price_re.match(ln) or shares_re.search(ln))
+
+        # 콤보(팔레이) 제목이 "예측 2개 콤보"처럼 짧게 끊기고 레그 목록이 다음 줄로 밀린 경우 제목에 합친다.
+        if re.fullmatch(r"(?:예측\s*\d+\s*개?\s*콤보|\d+\s*-?\s*(?:leg|pick|prediction)s?\s*combo)", title, re.IGNORECASE):
+            _rest = [ln for ln in content_lines if _clean_title(ln) != title]
+            if _rest and not _is_meta_line(_rest[0]):
+                title = f"{title} — {_clean_title(_rest[0])}"
+
         outcome, price = "", None
         for ln in content_lines:
             pm = price_re.match(ln)
@@ -1071,14 +1087,30 @@ def parse_pasted_activity(text):
             shares = _num(sm.group(1))
 
         shown = ""
-        if re.search(r"^\s*-\s*$", blob, re.MULTILINE):
+        if re.search(r"^\s*[-—–]\s*$", blob, re.MULTILINE):
             shown = "-"
-        else:
-            for ln in content_lines + [label_raw]:
-                am = amount_re.match(ln.strip())
-                if am:
-                    shown = f"{am.group(1)}${am.group(2)}"
-                    break
+        for ln in content_lines + [label_raw]:
+            am = amount_re.match(ln.strip())
+            if am:
+                shown = f"{am.group(1)}${am.group(2)}"
+                break
+
+        # 콤보(팔레이) 매수/매도 행은 UI에 가격·수량 없이 금액만 나온다.
+        # 금액을 원가로 복원(수량=금액, 가격=100¢): 원가·패배 손익은 정확하고,
+        # 승리는 '수익/상환' 이벤트 금액이 정산 연결로 반영된다. combo 플래그로
+        # 가격 기반 분석(80¢+ 고가 진입)에서는 제외된다.
+        combo_flag = False
+        combo_like = bool(re.search(r"예측\s*\d+\s*개?\s*콤보|(?:\d+\s*-?\s*(?:leg|pick|prediction)s?\s*)?combo", title or "", re.IGNORECASE))
+        if (action in ("BUY", "SELL") and combo_like
+                and (price is None or shares is None or shares <= 0)
+                and shown and shown != "-"):
+            _amt_val = _num(shown.replace("$", "").replace("+", ""))
+            if _amt_val is not None and abs(_amt_val) > 0:
+                shares = round(abs(_amt_val), 4)
+                price = 100.0
+                if not outcome:
+                    outcome = t("콤보", "Combo")
+                combo_flag = True
 
         d_iso = _dt_from_blob(blob)
         if action == "EVENT":
@@ -1123,6 +1155,7 @@ def parse_pasted_activity(text):
             "token_id": key,
             "src": "paste",
             "shown_pnl": shown,
+            "combo": combo_flag,
         })
 
     rows = sort_trades_newest_first(rows) if "sort_trades_newest_first" in globals() else rows
