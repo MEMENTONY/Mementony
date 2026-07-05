@@ -129,4 +129,35 @@ rows2, meta2 = d.parse_pasted_activity(PASTE2)
 assert meta2["ok"] == 1, meta2
 assert rows2[0]["name"] == "예측 2개 콤보 — Over 1.5 goals, 무승부", rows2[0]["name"]
 print("6) 두 줄 제목 병합 OK")
+
+# ---------- 7) 지갑(API) 경로: 손실 이벤트도 표시에 연결돼야 종료로 인식된다 ----------
+# streamlit_app.py 지갑 거래내역 카드가 group_auto_trades_for_pnl 결과에 activity_events를
+# 반드시 연결해야 한다는 회귀 가드. events를 넘기지 않으면 콤보 손실이 '보유 중'으로 남는다.
+T = 1751500000
+api_buys = [
+    {"type": "TRADE", "side": "BUY", "usdcSize": 67.0, "timestamp": T,
+     "title": "2-leg combo: Over 1.5 goals, Draw", "outcome": "Draw", "asset": "7001", "transactionHash": "0xd1"},
+    {"type": "TRADE", "side": "BUY", "usdcSize": 67.0, "timestamp": T + 1,
+     "title": "2-leg combo: Over 1.5 goals, Draw", "outcome": "Draw", "asset": "7001", "transactionHash": "0xd2"},
+    {"type": "TRADE", "side": "BUY", "usdcSize": 613.0, "timestamp": T + 2,
+     "title": "2-leg combo: Over 1.5 goals, France", "outcome": "France", "asset": "7002", "transactionHash": "0xf1"},
+]
+api_loss = [
+    {"type": "LOSS", "title": "2-leg combo: Over 1.5 goals, Draw", "outcome": "Draw", "timestamp": T + 7200, "transactionHash": "0xd3"},
+    {"type": "LOSS", "title": "2-leg combo: Over 1.5 goals, France", "outcome": "France", "timestamp": T + 7201, "transactionHash": "0xf2"},
+]
+wallet_trades = d.normalize_activity(api_buys)
+wallet_events = d.normalize_activity_events(api_loss)
+assert len(wallet_events) == 2, wallet_events
+assert all(e["shares"] is None and e["amount"] == "" for e in wallet_events), wallet_events  # 패배는 상환금이 없다
+
+# 옛 버그 재현: events 미전달 → 콤보 손실이 종료로 인식되지 않고 '보유 중'
+buggy = eng.group_auto_trades_for_pnl(wallet_trades)
+assert all(not g.get("_adjusted") and eng._display_remaining_shares(g) > 0 for g in buggy), buggy
+
+# 수정된 표시 경로: events 연결 → 손실 정산·종료로 인식
+fixed = eng.link_settlement_events_to_trade_groups(eng.group_auto_trades_for_pnl(wallet_trades), wallet_events)
+assert all(g.get("_adjusted") and g["adjusted_remaining_shares"] == 0 for g in fixed), fixed
+assert abs(sum(g["adjusted_realized_pnl"] for g in fixed) - (-747.0)) < 0.01, [g["adjusted_realized_pnl"] for g in fixed]
+print("7) 지갑 경로 손실 이벤트 연결 OK")
 print("ALL COMBO TESTS PASSED")

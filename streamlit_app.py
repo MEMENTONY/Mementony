@@ -2005,10 +2005,13 @@ with tab4:
         if st.session_state.auto_trades:
             sd, ed, date_label = render_trade_date_controls()
             filtered_trades, unknown_dates = filter_trades_by_date(st.session_state.get("auto_trades", []), sd, ed)
+            # 손실·상환·정산 이벤트도 같은 기간으로 걸러 함께 넘긴다. 이걸 넘기지 않으면
+            # 콤보(팔레이) 손실처럼 매도 없이 이벤트로만 종료되는 거래가 '보유 중'으로 남는다.
+            filtered_events, _ = filter_trades_by_date(st.session_state.get("activity_events", []) or [], sd, ed)
             if unknown_dates:
                 st.markdown(line(t(f"날짜 확인 필요 {unknown_dates}건은 선택 기간에서 제외되었습니다.", f"{unknown_dates} unknown-date rows excluded from the selected range."), "w"), unsafe_allow_html=True)
 
-            render_trade_pnl_summary(filtered_trades, date_label, title=t("지갑 거래내역 기준 추정손익", "Wallet activity estimated P&L"), key_prefix="wallet_")
+            render_trade_pnl_summary(filtered_trades, date_label, title=t("지갑 거래내역 기준 추정손익", "Wallet activity estimated P&L"), key_prefix="wallet_", events=filtered_events)
 
             sm = habit_report(filtered_trades)
             if filtered_trades:
