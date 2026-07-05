@@ -160,4 +160,37 @@ fixed = eng.link_settlement_events_to_trade_groups(eng.group_auto_trades_for_pnl
 assert all(g.get("_adjusted") and g["adjusted_remaining_shares"] == 0 for g in fixed), fixed
 assert abs(sum(g["adjusted_realized_pnl"] for g in fixed) - (-747.0)) < 0.01, [g["adjusted_realized_pnl"] for g in fixed]
 print("7) 지갑 경로 손실 이벤트 연결 OK")
+
+# ---------- 8) 지갑 경로: 자동확정 안 되는 팔레이는 수동 '패' 확정으로 장부에 손실 반영 ----------
+# API가 실가격·수량을 준 팔레이는 combo 플래그도 안 붙고 gamma-api 자동확정도 안 돼 '보유 중'으로
+# 남는다(사용자 실제 케이스). 카드에서 수동 '패' 확정하면 −원가가 장부·분석에 잡혀야 한다.
+api_open = [
+    {"type": "TRADE", "side": "BUY", "price": 0.111, "size": 603.6, "usdcSize": 67.0, "timestamp": T,
+     "title": "Paraguay vs. France: O/U 1.5 AND draw?", "outcome": "Yes", "asset": "11111111111111", "transactionHash": "0xo1"},
+    {"type": "TRADE", "side": "BUY", "price": 0.111, "size": 603.6, "usdcSize": 67.0, "timestamp": T + 1,
+     "title": "Paraguay vs. France: O/U 1.5 AND draw?", "outcome": "Yes", "asset": "11111111111111", "transactionHash": "0xo2"},
+    {"type": "TRADE", "side": "BUY", "price": 0.779, "size": 787.09, "usdcSize": 613.0, "timestamp": T + 2,
+     "title": "Paraguay vs. France: O/U 1.5 AND France win?", "outcome": "Yes", "asset": "22222222222222", "transactionHash": "0xo3"},
+]
+open_trades = d.normalize_activity(api_open)
+open_groups = eng.group_auto_trades_for_pnl(open_trades)
+assert all(not g["combo"] for g in open_groups), open_groups           # 실가격이 있어 콤보 아님
+assert all("보유" in g["status"] for g in open_groups), [g["status"] for g in open_groups]  # 미청산
+# 카드에서 '패' 확정 (trade_resolutions[key]='lost')
+st.session_state.auto_trades = open_trades
+st.session_state.activity_events = []
+st.session_state.paste_trades = []
+st.session_state.paste_events = []
+st.session_state.trade_emotions = {}
+st.session_state.trade_ledger = {}
+st.session_state.trade_resolutions = {g["key"]: "lost" for g in open_groups}
+# resolve_trade_row가 수동 패를 −잔여원가로 계산
+for g in open_groups:
+    assert eng.resolve_trade_row(g)["resolved"] == "lost", g
+eng.update_trade_ledger()
+led2 = st.session_state.trade_ledger
+assert len(led2) == 2, led2.keys()
+assert all(v["resolved"] == "lost" for v in led2.values()), led2
+assert abs(sum(v["pnl"] for v in led2.values()) - (-747.0)) < 0.01, [v["pnl"] for v in led2.values()]
+print("8) 지갑 팔레이 수동 패 확정 → 장부 −$747 OK")
 print("ALL COMBO TESTS PASSED")

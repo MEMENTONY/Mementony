@@ -487,6 +487,28 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
 </div>''',
                 unsafe_allow_html=True,
             )
+            # 미청산 포지션은 카드에서 바로 승/패를 확정할 수 있다 — 종료된 마켓/팔레이(콤보)는
+            # 폴리마켓 자동확정이 안 되므로 실제 손실/이익을 여기서 한 번에 기록해 장부·분석에 반영한다.
+            if rem_shares > 1e-6:
+                _opts = ["", "won", "lost"]
+                _lbl = {"": t("자동", "Auto"), "won": t("승(상환)", "Won"), "lost": t("패(소멸)", "Lost")}
+                _cur = str((st.session_state.get("trade_resolutions") or {}).get(r.get("key"), "") or "")
+                _pick = st.radio(
+                    t("결과 확정 — 이기면 승(상환)·지면 패(소멸) · 종료된 팔레이는 자동확정이 안 되니 여기서 기록",
+                      "Resolve held shares — Won / Lost"),
+                    _opts, index=_opts.index(_cur) if _cur in _opts else 0,
+                    format_func=lambda x: _lbl[x], horizontal=True,
+                    key=f"resolve_{key_prefix}_{idx}",
+                )
+                if _pick != _cur:
+                    _rmap = dict(st.session_state.get("trade_resolutions") or {})
+                    if _pick:
+                        _rmap[r.get("key")] = _pick
+                    else:
+                        _rmap.pop(r.get("key"), None)
+                    st.session_state.trade_resolutions = _rmap
+                    save_local_state()
+                    st.rerun()
             if open_flag:
                 # 체크하면 그 거래 카드 바로 밑에 손익 계산 박스가 인라인으로 뜬다 (스크롤/하단버튼 불필요).
                 buy_cost = float(r.get("buy_cost", 0) or 0)
@@ -523,25 +545,6 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
 </div>''',
                     unsafe_allow_html=True,
                 )
-                if rem_shares > 1e-6:
-                    _opts = ["", "won", "lost"]
-                    _lbl = {"": t("자동", "Auto"), "won": t("승(상환)", "Won"), "lost": t("패(소멸)", "Lost")}
-                    _cur = str((st.session_state.get("trade_resolutions") or {}).get(r.get("key"), "") or "")
-                    _pick = st.radio(
-                        t("결과 확정 — 보유분이 이기면 승, 지면 패", "Resolve held shares — Won / Lost"),
-                        _opts, index=_opts.index(_cur) if _cur in _opts else 0,
-                        format_func=lambda x: _lbl[x], horizontal=True,
-                        key=f"resolve_{key_prefix}_{idx}",
-                    )
-                    if _pick != _cur:
-                        _rmap = dict(st.session_state.get("trade_resolutions") or {})
-                        if _pick:
-                            _rmap[r.get("key")] = _pick
-                        else:
-                            _rmap.pop(r.get("key"), None)
-                        st.session_state.trade_resolutions = _rmap
-                        save_local_state()
-                        st.rerun()
                 # --- 감정·행동 태그: '감정적일 때 얼마 잃는지'의 재료 (거래복기 탭 행동 인사이트에 집계) ---
                 _ekey = str(r.get("key") or "")
                 if _ekey:
