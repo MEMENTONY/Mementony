@@ -2680,7 +2680,11 @@ gsheet_webapp_url = "https://script.google.com/macros/s/..../exec"
                 "no_creds": t("Secrets에 gcp_service_account가 없습니다.", "Missing gcp_service_account in Secrets."),
                 "empty_ledger": t("백업할 거래장부가 비어 있습니다.", "Trade ledger is empty."),
             }
-            st.markdown(line(_emap.get(_b["error"], t(f"백업 실패 — {_b['error']}", f"Backup failed — {_b['error']}")), "b"), unsafe_allow_html=True)
+            if "non_json_response" in str(_b["error"]):
+                st.markdown(line(t("응답이 JSON이 아닙니다 — Apps Script 배포의 '액세스'가 정확히 '모든 사용자'인지 확인하세요 (배포 관리 → 수정 → 액세스). 브라우저에서 웹 앱 URL을 직접 열어 로그인/권한승인 화면이 뜨는지 확인해보세요.",
+                                   "Non-JSON response — check the Apps Script deployment's Access is exactly 'Anyone' (Manage deployments → Edit → Access). Try opening the web app URL directly in a browser to see if a sign-in/consent screen appears."), "b"), unsafe_allow_html=True)
+            else:
+                st.markdown(line(_emap.get(_b["error"], t(f"백업 실패 — {_b['error']}", f"Backup failed — {_b['error']}")), "b"), unsafe_allow_html=True)
 
     # ---- 시트 → 앱 가져오기 (양방향의 반대 방향) ----
     st.markdown(f'<div class="footnote" style="margin:10px 0 2px 0;">{t("시트의 ledger 탭에서 카테고리·감정(1-5)·추격(Y) 칸을 고친 뒤 아래 버튼을 누르면 앱에 반영됩니다 (‘키’ 컬럼 기준 매칭 · Apps Script 방식 전용).", "Edit category / emotion(1-5) / chase(Y) cells in the sheet’s ledger tab, then press below to apply them in the app (matched by the ‘키’ key column · Apps Script method only).")}</div>', unsafe_allow_html=True)
@@ -2710,6 +2714,9 @@ gsheet_webapp_url = "https://script.google.com/macros/s/..../exec"
             _sb = backup_state_via_webapp()
             if _sb["ok"]:
                 st.success(t("전체 상태를 시트 state 탭에 저장했습니다.", "Full state saved to the sheet’s state tab."))
+            elif "non_json_response" in str(_sb["error"]):
+                st.markdown(line(t("응답이 JSON이 아닙니다 — Apps Script 배포의 '액세스'가 정확히 '모든 사용자'인지 확인하세요 (배포 관리 → 수정 → 액세스). 브라우저에서 웹 앱 URL을 직접 열어 로그인/권한승인 화면이 뜨는지 확인해보세요.",
+                                   "Non-JSON response — check the Apps Script deployment's Access is exactly 'Anyone' (Manage deployments → Edit → Access). Try opening the web app URL directly in a browser to see if a sign-in/consent screen appears."), "b"), unsafe_allow_html=True)
             else:
                 _sbmap = {"no_url": t("Apps Script URL을 먼저 입력하세요.", "Enter the Apps Script URL first.")}
                 st.markdown(line(_sbmap.get(_sb["error"], t(f"상태 백업 실패 — {_sb['error']}", f"State backup failed — {_sb['error']}")), "b"), unsafe_allow_html=True)

@@ -28,6 +28,17 @@ class FakeResp:
     def __exit__(self, *a):
         return False
 
+class FakeRawResp:
+    """비-JSON 응답(예: 배포 액세스 미설정 시 구글이 돌려주는 로그인/권한승인 HTML) 시뮬레이션."""
+    def __init__(self, text):
+        self._p = text.encode()
+    def read(self):
+        return self._p
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+
 TOK = "22222222222222222222"
 
 # ---------- 1) export: 키/감정/추격 컬럼 병합 ----------
@@ -71,6 +82,12 @@ with patch("urllib.request.urlopen", side_effect=fake_urlopen):
 assert r["ok"] and r["written"] == 1, r
 assert captured["data"]["token"] == "tok123" and captured["data"]["rows"][0] == d.GSHEET_LEDGER_HEADER
 print("3) webapp 백업 OK")
+
+# ---------- 3b) 회귀: 비-JSON 응답(배포 액세스 미설정 등)을 거짓 성공 처리하지 않는다 ----------
+with patch("urllib.request.urlopen", side_effect=lambda req, timeout=None: FakeRawResp("<html>Sign in - Google Accounts</html>")):
+    r_html = d.backup_ledger_via_webapp()
+assert not r_html["ok"] and "non_json_response" in r_html["error"], r_html
+print("3b) 비-JSON 응답 → 거짓 성공 방지 OK")
 
 # ---------- 4) 시트 → 앱 가져오기 ----------
 st.session_state.trade_ledger = {

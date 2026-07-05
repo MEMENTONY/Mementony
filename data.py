@@ -1431,15 +1431,17 @@ def backup_ledger_via_webapp(force=False):
                                      headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=25) as resp:
             txt = resp.read().decode("utf-8", "ignore")
-        ok_resp, written = True, n
         try:
             j = json.loads(txt)
             ok_resp = bool(j.get("ok", True))
             written = int(j.get("written", n))
         except Exception:
-            pass
+            # 구글이 JSON 대신 로그인/권한승인 HTML 등을 돌려주면 여기로 온다 — 스크립트가
+            # 실제로 실행됐다고 볼 근거가 없으므로 절대 성공 처리하지 않는다(배포 액세스 설정 확인 필요).
+            ok_resp, written = False, 0
+            txt = f"non_json_response (check Apps Script deployment access = Anyone): {txt[:120]}"
         if not ok_resp:
-            return {"ok": False, "error": f"webapp: {txt[:140]}", "written": 0}
+            return {"ok": False, "error": f"webapp: {txt[:180]}", "written": 0}
         st.session_state["_gsheet_last_backup"] = datetime.now(KST).isoformat(timespec="minutes")
         st.session_state["_gsheet_last_count"] = written
         return {"ok": True, "error": "", "written": written}
@@ -1575,13 +1577,14 @@ def backup_state_via_webapp():
                                      headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=25) as resp:
             txt = resp.read().decode("utf-8", "ignore")
-        ok_resp = True
         try:
             ok_resp = bool(json.loads(txt).get("ok", True))
         except Exception:
-            pass
+            # 비-JSON 응답(로그인/권한승인 HTML 등)은 스크립트 미실행으로 간주 — 성공 처리 금지.
+            ok_resp = False
+            txt = f"non_json_response (check Apps Script deployment access = Anyone): {txt[:120]}"
         if not ok_resp:
-            return {"ok": False, "error": f"webapp: {txt[:140]}"}
+            return {"ok": False, "error": f"webapp: {txt[:180]}"}
         st.session_state["_gsheet_state_last_backup"] = payload["saved_at"]
         st.session_state["state_backup_last_at"] = payload["saved_at"]  # 영구 저장 → 유실 위험 배너 판단용
         return {"ok": True, "error": ""}
