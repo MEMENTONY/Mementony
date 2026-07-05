@@ -24,6 +24,17 @@ class FakeResp:
     def __exit__(self, *a):
         return False
 
+class FakeRawResp:
+    """비-JSON 응답(예: 배포 액세스 미설정 시 구글이 돌려주는 로그인/권한승인 HTML) 시뮬레이션."""
+    def __init__(self, text):
+        self._p = text.encode()
+    def read(self):
+        return self._p
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+
 # ---------- 1) 스냅샷: raw 제외 + 데이터 포함 / 서명: _saved_at 무시 ----------
 st.session_state.trade_resolutions = {"K": "won"}
 st.session_state.trade_emotions = {"K": {"emotion": 3, "chase": False}}
@@ -78,6 +89,12 @@ assert st.session_state["_local_state_status"] == "restored_from_sheet"
 ondisk = json.load(open("memento_state.json", encoding="utf-8"))
 assert ondisk["cash"] == 999.0
 print("2~4) 백업/조회/복원 왕복 OK")
+
+# ---------- 4b) 회귀: 비-JSON 응답(배포 액세스 미설정 등)을 거짓 성공 처리하지 않는다 ----------
+with patch("urllib.request.urlopen", side_effect=lambda req, timeout=None: FakeRawResp("<html>Sign in - Google Accounts</html>")):
+    r_html = d.backup_state_via_webapp()
+assert not r_html["ok"] and "non_json_response" in r_html["error"], r_html
+print("4b) 비-JSON 응답 → 거짓 성공 방지 OK")
 
 # ---------- 5) AppTest: 재배포 시나리오 — 로컬 없음 + Secrets URL → 부팅 자동 복원 ----------
 from streamlit.testing.v1 import AppTest
