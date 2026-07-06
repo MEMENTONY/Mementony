@@ -458,11 +458,11 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
         needs_resolve = (not res["resolved"]) and (not r.get("_adjusted")) and rem_shares > 1e-6 and closed_shares <= 1e-6
         resolve_hint_html = ""
         if needs_resolve:
-            _hint = t("결과 미확정 · 왼쪽 ☑를 켜고 승/패 확정",
-                      "Unresolved · tick the left box to mark Won/Lost")
+            _hint = t("결과 미확정 · 아래 버튼으로 승/패 확정",
+                      "Unresolved · use the buttons below to mark Won/Lost")
             if r.get("combo"):
-                _hint = t("콤보는 자동 확정 불가 · 왼쪽 ☑ 켜고 승/패 확정",
-                          "Combos can't auto-resolve · tick the left box to mark Won/Lost")
+                _hint = t("콤보는 자동 확정 불가 · 아래 버튼으로 승/패 확정",
+                          "Combos can't auto-resolve · use the buttons below")
             resolve_hint_html = f'<div style="margin-top:6px;"><span class="state w">{_hint}</span></div>'
         rid = make_review_id_from_trade_group(r, source)
         csel, cbody = st.columns([0.28, 3.72])
@@ -499,6 +499,27 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
 </div>''',
                 unsafe_allow_html=True,
             )
+            # 미확정 보유분: 카드에서 바로 원클릭 승/패 확정 (체크박스 열 필요 없음).
+            # 폴리마켓 API가 진 콤보의 손실을 안 주므로, 손실인데 '보유 중 $0'으로 뜨는 걸 여기서 즉시 확정.
+            if needs_resolve and not open_flag:
+                _q1, _q2, _q3 = st.columns([1.1, 1.1, 2.6])
+                _qkey = r.get("key")
+                with _q1:
+                    if st.button(t("패로 확정", "Mark Lost"), key=f"quick_lost_{key_prefix}_{idx}", width="stretch"):
+                        _rm = dict(st.session_state.get("trade_resolutions") or {})
+                        _rm[_qkey] = "lost"
+                        st.session_state.trade_resolutions = _rm
+                        save_local_state()
+                        st.rerun()
+                with _q2:
+                    if st.button(t("승으로 확정", "Mark Won"), key=f"quick_won_{key_prefix}_{idx}", width="stretch"):
+                        _rm = dict(st.session_state.get("trade_resolutions") or {})
+                        _rm[_qkey] = "won"
+                        st.session_state.trade_resolutions = _rm
+                        save_local_state()
+                        st.rerun()
+                with _q3:
+                    st.markdown(f'<div class="footnote" style="padding-top:8px;">{t(f"패 = −{money(rem_cost)} 반영", f"Lost = −{money(rem_cost)}")}</div>', unsafe_allow_html=True)
             if open_flag:
                 # 체크하면 그 거래 카드 바로 밑에 손익 계산 박스가 인라인으로 뜬다 (스크롤/하단버튼 불필요).
                 buy_cost = float(r.get("buy_cost", 0) or 0)
