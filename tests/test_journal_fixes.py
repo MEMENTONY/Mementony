@@ -126,4 +126,51 @@ assert d.merge_activity_into_log([items[0]]) == 0, "내용이 같은 옛 행과 
 assert d.merge_activity_into_log([items[1]]) == 1
 print("6) 레거시 내용 지문 중복제거 OK")
 
+# ---------- 7) 이벤트 오분류 수정: 시장 제목의 'Winner' 단어로 SPLIT이 정산 이벤트가 되면 안 됨 ----------
+api_rows = [
+    {"type": "SPLIT", "title": "LoL: T1 vs FURIA - Game 3 Winner", "usdcSize": 50.0, "timestamp": 1751500000},
+    {"type": "MERGE", "title": "Will X win the election?", "usdcSize": 10.0, "timestamp": 1751500001},
+    {"type": "REDEEM", "title": "Some market", "usdcSize": 99.0, "timestamp": 1751500002},
+]
+evs = d.normalize_activity_events(api_rows)
+assert len(evs) == 1 and evs[0]["type"] == "REDEEM", evs
+print("7) 정산 이벤트 분류(제목 키워드 무시 · REDEEM만) OK")
+
+# ---------- 8) '확인 필요(매도>매수)' 행도 수동 확정 가능 (회수금−매수금 기준) ----------
+import engine as eng
+oversold = [
+    {"tx_id": "o1", "d": "2026-07-01T10:00:00+09:00", "name": "Oversold market", "outcome": "Yes",
+     "side": "BUY", "price": 50.0, "shares": 10.0, "amount": 5.0, "asset": "tokO", "token_id": "tokO"},
+    {"tx_id": "o2", "d": "2026-07-01T11:00:00+09:00", "name": "Oversold market", "outcome": "Yes",
+     "side": "SELL", "price": 60.0, "shares": 30.0, "amount": 18.0, "asset": "tokO", "token_id": "tokO"},
+]
+og = eng.group_auto_trades_for_pnl(oversold)[0]
+assert og["realized_pnl"] is None and og["remaining_shares"] == 0.0, og  # 매도>매수 → 확인 필요
+st.session_state.trade_resolutions = {}
+assert eng.resolve_trade_row(og)["realized_final"] is None               # 미확정이면 그대로 '확인 필요'
+st.session_state.trade_resolutions = {og["key"]: "lost"}
+r_lost = eng.resolve_trade_row(og)
+assert abs(r_lost["realized_final"] - 13.0) < 0.01, r_lost               # 회수 18 − 매수 5 = +13
+print("8) 매도>매수 행 수동 확정 폴백 OK")
+
+# ---------- 9) AppTest: AI 탭 삭제 + 확정취소 버튼 + 전체 markdown HTML 안전성 ----------
+from seed_state import seed as _seed
+_seed()
+from streamlit.testing.v1 import AppTest
+at = AppTest.from_file("streamlit_app.py", default_timeout=180).run()
+assert not at.exception, f"EXCEPTION: {at.exception}"
+_all_md = "\n".join(str(m.value) for m in at.markdown)
+assert "AI 리서치" not in _all_md, "AI research tab must be removed"
+_btns = [b.label for b in at.button]
+assert any("확정 취소" in x for x in _btns), _btns                       # 수동 lost 표시된 거래에 취소 버튼
+for m in at.markdown:
+    s = str(m.value)
+    head = s.lstrip()[:8].lower()
+    if not s.lstrip().startswith("<") or head.startswith(("<style", "<script", "<pre")):
+        continue  # 마크다운 문서/스타일 블록은 빈 줄 허용
+    for i, ln in enumerate(s.splitlines()[1:], 2):
+        assert ln.strip(), f"HTML 블록 안 공백 줄(태그 노출 재발): line {i} of {s[:80]!r}"
+        assert not ln.startswith("    "), f"HTML 블록 안 4칸 들여쓰기: {ln[:60]!r}"
+print("9) AI 탭 삭제 + 확정취소 버튼 + 전체 HTML 안전성 OK")
+
 print("ALL JOURNAL-FIX TESTS PASSED")

@@ -1716,14 +1716,13 @@ try:
 except Exception:
     pass
 
-tab1, _tab_pf_top, tab_rec, tab_ai, tab_set = st.tabs([
+tab1, _tab_pf_top, tab_rec, tab_set = st.tabs([
     t("진입 판독", "Entry check"),
     t("포트폴리오", "Portfolio"),
     t("기록", "Records"),
-    t("AI 리서치", "AI research"),
     t("설정 · 도구", "Settings · tools"),
 ])
-# 7 -> 5 tabs: 부분매도 folds under 포트폴리오, 거래일지+거래복기 fold under 기록.
+# 부분매도 folds under 포트폴리오, 거래일지+거래복기 fold under 기록. (AI 리서치 탭은 삭제됨)
 # Sub-tabs are created here; the existing `with tab3/tab_pf/tab4/tab_review:` blocks below
 # render into them unchanged.
 with _tab_pf_top:
@@ -2157,145 +2156,6 @@ with tab_review:
     render_tab_review()
 
 
-# =====================================================
-# Tab — AI research (optional, manual-trigger only)
-# =====================================================
-with tab_ai:
-    st.markdown(f'<div class="headline">{t("AI 리서치", "AI research")}</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="subline">{t("Claude는 실시간 인터넷이 없어 최근 전적·부상·배당을 직접 가져오지 못합니다. 대신 정산 규칙 해석, 붙여넣은 리서치 정리, 엣지 판단, 진입 전 체크리스트에 집중합니다. 버튼을 눌렀을 때만 호출되어 토큰을 아낍니다.", "Claude has no live internet, so it can’t pull recent form, injuries, or odds itself. It focuses on reading the resolution rules, organizing the notes you paste, framing the edge, and a pre-bet checklist. It runs only when you press the button.")}</div>',
-        unsafe_allow_html=True)
-
-    has_key = bool(get_api_key())
-    if not has_key:
-        st.markdown(line(t("Claude API 키가 없습니다 — 설정 · 도구 탭에서 ANTHROPIC_API_KEY를 등록하세요.", "No Claude API key — add ANTHROPIC_API_KEY in Settings · tools."), "w"), unsafe_allow_html=True)
-
-    pend = st.session_state.get("ai_pending", {}) or {}
-    has_pend = bool(pend.get("market"))
-
-    # ---- choose the subject: pending market from Entry, or a manual quick entry ----
-    if has_pend:
-        src_choice = st.radio(
-            t("리서치 대상", "Research subject"),
-            ["pending", "manual"],
-            format_func=lambda c: t("진입 판독에서 보낸 시장", "Market sent from Entry") if c == "pending" else t("직접 입력", "Enter manually"),
-            horizontal=True, key="ai_src_choice", label_visibility="collapsed",
-        )
-    else:
-        src_choice = "manual"
-        st.markdown(f'<div class="footnote" style="margin:0 0 8px 0;">{t("진입 판독에서 ‘AI 분석 탭으로 보내기’를 누르면 시장이 자동으로 채워집니다. 또는 아래에 직접 입력하세요.", "Press ‘Send to AI tab’ in Entry to auto-fill a market, or enter one below.")}</div>', unsafe_allow_html=True)
-
-    if src_choice == "pending" and has_pend:
-        subj = {
-            "market": pend.get("market", ""), "outcome": pend.get("outcome", ""),
-            "current_price": float(pend.get("current_price", 0.0) or 0.0),
-            "fair_price": float(pend.get("fair_price", 0.0) or 0.0),
-            "edge": float(pend.get("edge", 0.0) or 0.0),
-            "category": pend.get("category", "기타"), "subcategory": pend.get("subcategory", ""),
-            "market_class": pend.get("market_class", ""), "token_id": pend.get("token_id", ""),
-            "bookmaker_prob": float(pend.get("bookmaker_prob", 0.0) or 0.0),
-            "resolution": str(pend.get("resolution", "") or ""),
-            "default_memo": st.session_state.get("_ai_memo_cache", pend.get("ai_memo", "")),
-            "default_bk": st.session_state.get("_ai_bk_cache", pend.get("bookmaker_memo", "")),
-        }
-    else:
-        mc1, mc2 = st.columns([3, 1])
-        with mc1:
-            m_name = st.text_input(t("시장 / 매치", "Market / match"), value=st.session_state.get("ai_manual_name", ""), key="ai_manual_name", placeholder=t("예: T1 vs Gen.G — Match Winner", "e.g. T1 vs Gen.G — Match Winner"))
-        with mc2:
-            m_out = st.text_input(t("선택 결과", "Outcome"), value=st.session_state.get("ai_manual_out", ""), key="ai_manual_out", placeholder="T1")
-        mc3, mc4, mc5 = st.columns(3)
-        with mc3:
-            m_price = st.number_input(t("현재가 (¢)", "Price (¢)"), 0.0, 100.0, float(st.session_state.get("ai_manual_price", 50.0)), key="ai_manual_price")
-        with mc4:
-            m_fair = st.number_input(t("내 적정가 (¢)", "My fair (¢)"), 0.0, 100.0, float(st.session_state.get("ai_manual_fair", 50.0)), key="ai_manual_fair")
-        with mc5:
-            cat_opts = [t("e스포츠", "Esports"), t("일반 스포츠", "Sports"), t("정치", "Politics"), t("뉴스·이벤트", "News / events"), t("크립토", "Crypto"), t("기타", "Other")]
-            m_cat = st.selectbox(t("카테고리", "Category"), cat_opts, key="ai_manual_cat")
-        m_res = st.text_area(t("정산 규칙 (Polymarket resolution 텍스트 붙여넣기)", "Resolution rules (paste Polymarket resolution text)"), value=st.session_state.get("ai_manual_res", ""), height=70, key="ai_manual_res", placeholder=t("이 시장이 어떻게 정산되는지에 대한 공식 설명", "the official description of how this market resolves"))
-        subj = {
-            "market": m_name, "outcome": m_out, "current_price": float(m_price),
-            "fair_price": float(m_fair), "edge": float(m_fair) - float(m_price),
-            "category": m_cat, "subcategory": "", "market_class": "", "token_id": "",
-            "bookmaker_prob": 0.0, "resolution": str(m_res or ""),
-            "default_memo": st.session_state.get("_ai_memo_cache", ""), "default_bk": st.session_state.get("_ai_bk_cache", ""),
-        }
-
-    # ---- subject summary line ----
-    if subj["market"]:
-        edge_txt = f"Edge {subj['edge']:+.1f}¢" if subj["fair_price"] else t("적정가 미입력", "no fair yet")
-        st.markdown(
-            f'<div class="spec-row"><div class="spec-key">{esc(subj["market"])}</div>'
-            f'<div class="spec-val"><b>{esc(subj["outcome"]) or "—"}</b> · {cents(subj["current_price"])} · {edge_txt} · {esc(str(subj["category"]))}'
-            + (f' · {t("정산 규칙 있음", "has resolution text")}' if subj["resolution"] else f' · {t("정산 규칙 없음", "no resolution text")}')
-            + '</div><div></div></div>',
-            unsafe_allow_html=True)
-
-    # ---- depth + research notes ----
-    mode_label = st.selectbox(
-        t("리포트 상세도", "Report depth"),
-        [t("요약", "Brief"), t("표준", "Standard"), t("상세", "Detailed")],
-        index={"brief": 0, "standard": 1, "detailed": 2}.get(st.session_state.get("ai_report_mode", "standard"), 1),
-        key="ai_report_mode_label",
-    )
-    mode = {"요약": "brief", "Brief": "brief", "표준": "standard", "Standard": "standard", "상세": "detailed", "Detailed": "detailed"}.get(mode_label, "standard")
-    st.session_state.ai_report_mode = mode
-
-    ai_memo = st.text_area(
-        t("리서치 메모 (전적·순위·라인업·부상·뉴스)", "Research notes (form, standings, lineup, injuries, news)"),
-        value=subj["default_memo"],
-        placeholder=t("여기에 붙여넣은 내용만 근거로 사용합니다. 비우면 정산 규칙 해석과 분석 틀만 제공합니다.", "Only what you paste here is used as evidence. Leave empty for a resolution read and framework only."),
-        height=110, key="ai_tab_memo",
-    )
-    bk_memo = st.text_input(
-        t("외부배당 메모", "Bookmaker memo"),
-        value=subj["default_bk"],
-        placeholder=t("예: Pinnacle T1 -180, Bet365 Gen.G 1.55", "e.g. Pinnacle T1 -180, Bet365 Gen.G 1.55"),
-        key="ai_tab_bk_memo",
-    )
-
-    subj_id = subj["token_id"] or f'{subj["market"]}|{subj["outcome"]}'
-    mkey = f"{subj_id}|{mode}|{ai_memo.strip()}|{bk_memo.strip()}|{subj['fair_price']}|{subj['edge']}|{subj['resolution'][:60]}"
-    c1, c2 = st.columns([1, 1])
-    gen = c1.button(t("AI 리포트 생성", "Generate report"), width="stretch", key="ai_generate_report", disabled=not subj["market"])
-    force = c2.button(t("새로 생성", "Force refresh"), width="stretch", key="ai_force_report", disabled=not subj["market"])
-
-    if (gen or force) and subj["market"]:
-        st.session_state._ai_memo_cache = ai_memo
-        st.session_state._ai_bk_cache = bk_memo
-        cache = st.session_state.ai_report_cache
-        if (not force) and mkey in cache:
-            st.session_state.ai_text = cache[mkey]
-            st.session_state.ai_error = ""
-        else:
-            prompt = build_prompt(
-                market_name=subj["market"], outcome=subj["outcome"], current_price=subj["current_price"],
-                category=subj["category"], sub=subj["subcategory"], ai_context=ai_memo,
-                bookmaker_memo=bk_memo, bookmaker_prob=subj["bookmaker_prob"],
-                fair_price=subj["fair_price"], edge=subj["edge"], market_class=subj["market_class"],
-                resolution=subj["resolution"], report_mode=mode,
-            )
-            try:
-                with st.spinner(t("AI 분석 중", "Analyzing")):
-                    txt, err = call_claude(prompt, mode=mode)
-            except Exception as e:
-                txt, err = None, str(e)
-            st.session_state.ai_text = txt or ""
-            st.session_state.ai_error = err or ""
-            if txt:
-                cache[mkey] = txt
-        st.session_state.ai_last_market_key = mkey
-
-    if st.session_state.get("ai_text"):
-        render_ai_report_json(st.session_state.ai_text)
-    elif st.session_state.get("ai_error"):
-        err = str(st.session_state.get("ai_error"))
-        if err == "no_key":
-            st.markdown(line(t("Claude API 키가 없어 생성하지 못했습니다 — 설정 · 도구에서 등록하세요.", "Couldn’t generate — add your Claude API key in Settings · tools."), "w"), unsafe_allow_html=True)
-        else:
-            st.markdown(line(t("AI 호출에 실패했습니다 — 새로 생성을 눌러 다시 시도하세요.", "The AI call failed — press Force refresh to retry."), "w"), unsafe_allow_html=True)
-
-
 with tab_pf:
     st.markdown(f'<div class="headline">{t("포트폴리오", "Portfolio")}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="subline">{t("현재 보유 포지션을 먼저 보고, 그다음 전체 자산 요약과 손익을 확인합니다.", "Open holdings first, then the wallet summary, then P&L.")}</div>', unsafe_allow_html=True)
@@ -2528,19 +2388,6 @@ with tab_pf:
 # =====================================================
 with tab_set:
     st.markdown(f'<div class="headline">{t("설정 · 도구", "Settings · tools")}</div>', unsafe_allow_html=True)
-
-    # ---- Claude API test ----
-    st.markdown(f'<div class="eyebrow">{t("Claude API 상태", "Claude API status")}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="footnote" style="margin:0 0 10px 0;">{t("API 키는 코드에 직접 넣지 말고 Streamlit Secrets의 ANTHROPIC_API_KEY에 저장하세요.", "Do not hard-code keys. Save it as ANTHROPIC_API_KEY in Streamlit Secrets.")}</div>', unsafe_allow_html=True)
-    if st.button(t("Claude API 연결 테스트", "Test Claude API"), width="stretch"):
-        test_text, test_err = call_claude(t("한 문장으로 '연결 성공'이라고 답해.", "Reply with one sentence: connection successful."))
-        if test_err:
-            st.markdown(line(t(f"Claude API 실패 — {test_err}", f"Claude API failed — {test_err}"), "b"), unsafe_allow_html=True)
-        else:
-            st.markdown(line(t("Claude API 연결 성공", "Claude API connection successful"), "g"), unsafe_allow_html=True)
-            st.caption(test_text)
-
-    st.markdown("<hr>", unsafe_allow_html=True)
 
     # ---- Google Sheets backup ----
     st.markdown(f'<div class="eyebrow">{t("구글 시트 백업 · 양방향", "Google Sheets backup · two-way")}</div>', unsafe_allow_html=True)

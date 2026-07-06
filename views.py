@@ -17,133 +17,6 @@ from ui import *
 from engine import *
 from data import *
 
-def _ai_plain_fallback(text):
-    """If JSON parsing fails, still show a clean report-like card. Never expose the parse failure."""
-    import re as _re
-    s = str(text or "")
-    s = _re.sub(r"```.*?```", " ", s, flags=_re.S)
-    s = s.replace("#", "").replace("---", "").replace("{", " ").replace("}", " ").replace('"', "")
-    s = _re.sub(r"\s+", " ", s).strip()
-    bullets = [seg.strip() for seg in _re.split(r"(?<=[.!?。])\s+", s) if len(seg.strip()) > 8][:6]
-    st.markdown(
-        f'<div class="verdict"><div class="eyebrow">{t("AI 리서치", "AI research")}</div>'
-        f'<div class="v-title" style="font-size:22px;"><span class="dot i"></span>{t("리서치 요약", "Research summary")}</div></div>',
-        unsafe_allow_html=True)
-    if bullets:
-        st.markdown("".join(line(esc(b), "i") for b in bullets), unsafe_allow_html=True)
-    else:
-        st.markdown(
-            f'<div class="rc-missing"><div class="rc-h">{t("데이터 부족", "Not enough to report")}</div>'
-            f'<div>· {t("리서치 메모를 붙여넣고 다시 생성하면 더 정확한 리포트를 만듭니다.", "Paste research notes and regenerate for a fuller report.")}</div></div>',
-            unsafe_allow_html=True)
-
-def render_ai_report_json(text):
-    """Render the AI research report as a clean, decision-oriented layout.
-
-    Tolerant of both the current schema and older cached reports. Never shows raw
-    JSON or a parser failure to the user.
-    """
-    d = safe_json_parse(text)
-    if not isinstance(d, dict) or not d:
-        _ai_plain_fallback(text)
-        return
-
-    stance = str(_ai_get(d, "stance", "ai_stance")).lower()
-    sk = {"favorable": "g", "neutral": "w", "risky": "b"}.get(stance, "i")
-    stance_word = {"g": t("우호적", "Favorable"), "w": t("중립", "Neutral"),
-                   "b": t("위험", "Risky"), "i": t("판단 보류", "Undecided")}[sk]
-    title = esc(_ai_get(d, "report_title", default=t("AI 리서치", "AI research")))
-    verdict = esc(_ai_get(d, "verdict", "ai_opinion"))
-    prob = esc(_ai_get(d, "estimated_probability", "ai_estimated_probability"))
-    conf = str(_ai_get(d, "confidence")).strip().lower()
-    ck = {"high": "g", "medium": "w", "low": "b"}.get(conf, "i")
-    conf_word = {"g": t("높음", "High"), "w": t("보통", "Medium"),
-                 "b": t("낮음", "Low"), "i": "—"}[ck]
-
-    pills = f'<span class="state {sk}">{stance_word}</span>'
-    if prob and prob != "확인 필요":
-        pills += f' <span class="state i">{t("AI 예상", "AI est.")} {prob}</span>'
-    pills += f' <span class="state {ck}">{t("신뢰도", "Confidence")} {conf_word}</span>'
-
-    st.markdown(
-        f'<div class="verdict"><div class="eyebrow">{t("AI 리서치", "AI research")}</div>'
-        f'<div class="v-title" style="font-size:24px;"><span class="dot {sk}"></span>{title}</div>'
-        + (f'<div class="v-sub">{verdict}</div>' if verdict else "")
-        + f'<div style="margin-top:12px;">{pills}</div></div>',
-        unsafe_allow_html=True)
-
-    basis = esc(_ai_get(d, "data_basis"))
-    if basis:
-        st.markdown(
-            f'<div class="footnote" style="margin:-6px 0 6px 0;">{t("분석 근거", "Based on")}: {basis}</div>',
-            unsafe_allow_html=True)
-
-    summary = [x for x in (_ai_get(d, "summary", "summary_bullets", "research_summary", default=[]) or []) if str(x).strip()][:4]
-    if summary:
-        st.markdown(f'<div class="eyebrow">{t("핵심 요약", "Summary")}</div>'
-                    + "".join(line(esc(x), "i") for x in summary), unsafe_allow_html=True)
-
-    # Odds / edge — the numbers Memento already knows, framed.
-    od = _ai_get(d, "odds", "odds_table", default={})
-    LBL_OD = {
-        "polymarket": "Polymarket", "polymarket_price": "Polymarket",
-        "implied": t("시장 implied", "Implied"), "polymarket_implied": t("시장 implied", "Implied"),
-        "fair": t("내 적정가", "My fair"), "user_fair_price": t("내 적정가", "My fair"),
-        "edge": "Edge", "user_edge": "Edge",
-        "bookmaker": t("외부배당", "Bookmaker"), "bookmaker_view": t("외부배당", "Bookmaker"),
-        "read": t("코멘트", "Read"), "gap_comment": t("코멘트", "Read"),
-    }
-    if isinstance(od, dict):
-        od_rows = [(LBL_OD.get(k, k), str(v)) for k, v in od.items() if str(v).strip()]
-        if od_rows:
-            st.markdown(f'<div class="eyebrow">{t("배당 · 엣지", "Odds · edge")}</div>'
-                        + '<div class="rc-card">'
-                        + "".join(f'<div class="rc-row"><span class="rc-k">{esc(k)}</span><span class="rc-v">{esc(v)}</span></div>' for k, v in od_rows)
-                        + '</div>', unsafe_allow_html=True)
-
-    # Resolution read — Claude's main value-add, highlighted.
-    res = esc(_ai_get(d, "resolution_read", "resolution_check"))
-    if res:
-        st.markdown(f'<div class="eyebrow">{t("정산 조건 해석", "Resolution read")}</div>'
-                    f'<div class="rc-card"><div class="rc-note">{res}</div></div>', unsafe_allow_html=True)
-
-    # Scouting — only shown when there is real content beyond placeholders.
-    sc = _ai_get(d, "scouting", "pre_match_table", "context_table", default={})
-    LBL_SC = {
-        "head_to_head": t("상대전적", "Head-to-head"), "recent_form": t("최근 폼", "Recent form"),
-        "standing": t("순위", "Standing"), "league_standing": t("순위", "Standing"),
-        "league_record": t("리그 전적", "League record"),
-        "roster_news": t("로스터/뉴스", "Roster / news"), "style_matchup": t("스타일 매치업", "Style matchup"),
-    }
-    if isinstance(sc, dict):
-        sc_rows = [(LBL_SC.get(k, k), str(v)) for k, v in sc.items() if str(v).strip()]
-        real = [r for r in sc_rows if str(r[1]).strip() not in ("확인 필요", "Verify", "N/A", "-")]
-        if real:
-            st.markdown(f'<div class="eyebrow">{t("스카우팅", "Scouting")}</div>'
-                        + '<div class="rc-card">'
-                        + "".join(f'<div class="rc-row"><span class="rc-k">{esc(k)}</span><span class="rc-v">{esc(v)}</span></div>' for k, v in sc_rows)
-                        + '</div>', unsafe_allow_html=True)
-
-    swing = [x for x in (_ai_get(d, "swing_factors", "key_variables", default=[]) or []) if str(x).strip()][:5]
-    if swing:
-        st.markdown(f'<div class="eyebrow">{t("승부처", "Swing factors")}</div>'
-                    + "".join(line(esc(x), "w") for x in swing), unsafe_allow_html=True)
-
-    checklist = [x for x in (_ai_get(d, "checklist", default=[]) or []) if str(x).strip()][:6]
-    if checklist:
-        st.markdown(
-            f'<div class="rc-action"><div class="rc-h">{t("진입 전 체크리스트", "Before you enter")}</div>'
-            + "".join(f'<div class="rc-row"><span class="rc-k">☐</span><span class="rc-v" style="text-align:left;">{esc(x)}</span></div>' for x in checklist)
-            + '</div>', unsafe_allow_html=True)
-
-    md = [x for x in (_ai_get(d, "missing_data", default=[]) or []) if str(x).strip()]
-    if md:
-        st.markdown(f'<div class="rc-missing"><div class="rc-h">{t("확인 필요 데이터", "Verify yourself")}</div>'
-                    + "".join(f"<div>· {esc(x)}</div>" for x in md) + '</div>', unsafe_allow_html=True)
-
-def render_ai(text):
-    render_ai_report_json(text)
-
 def render_live_price_panel(wm):
     """Live mid + edge update + real Polymarket price-history chart. Auto-refreshes; read-only."""
     wm = wm if isinstance(wm, dict) else {}
@@ -431,6 +304,15 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
         st.markdown(line(t(f"정산/손실 이벤트 {linked_count}건을 거래 요약에 자동 연결했습니다.", f"Auto-linked {linked_count} settlement/loss event(s) to trade summaries."), "g"), unsafe_allow_html=True)
     if s0["unverified"]:
         st.markdown(line(t("일부 정산 항목은 금액 정보가 없어 손익 확인이 필요합니다.", "Some settlement rows have no amount; P&L needs review."), "w"), unsafe_allow_html=True)
+    # 미확정 거래가 몇 건인지 위에서 바로 보여준다 — 각 카드의 '패로/승으로 확정' 버튼으로 정리.
+    _unres_n = 0
+    for _r0 in rows:
+        _res0 = resolve_trade_row(_r0)
+        if (not _res0["resolved"]) and (_display_remaining_shares(_r0) > 1e-6 or _res0["realized_final"] is None):
+            _unres_n += 1
+    if _unres_n:
+        st.markdown(line(t(f"결과 미확정 거래 {_unres_n}건 — 각 카드의 ‘패로/승으로 확정’ 버튼으로 직접 정리할 수 있습니다.",
+                           f"{_unres_n} unresolved trade(s) — use each card's Mark Lost / Mark Won buttons to settle them."), "w"), unsafe_allow_html=True)
     st.markdown(f'<div class="footnote">{t("추정치입니다. 공식 포트폴리오 손익과 별개이며 아직 합산하지 않습니다.", "Estimate only. Separate from official portfolio P&L; not merged yet.")}</div>', unsafe_allow_html=True)
 
     source = "wallet" if str(key_prefix or "").startswith("wallet") else "paste"
@@ -453,16 +335,20 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
                 note_parts.append(f'{float(r.get("linked_event_shares")):.2f} {t("주", "shares")}')
             if r.get("linked_event_amount") is not None:
                 note_parts.append(money(float(r.get("linked_event_amount"))))
-        # 미확정 보유 포지션 힌트: 매도·정산이 없어 결과가 안 정해진 거래는 수동 승/패 확정이 필요하다.
-        # (콤보/팔레이는 자동 확정이 불가능하므로 특히 안내) — 왼쪽 체크박스를 켜면 확정 라디오가 나온다.
-        needs_resolve = (not res["resolved"]) and (not r.get("_adjusted")) and rem_shares > 1e-6 and closed_shares <= 1e-6
+        # 앱이 결과를 확정하지 못한 모든 거래(보유 중 · 일부 청산 · 정산 반영됐지만 잔여 있음 ·
+        # 매도>매수 '확인 필요')에 원클릭 승/패 확정 버튼을 보여준다 — 사용자가 직접 정리할 수 있게.
+        manual_mark = str((st.session_state.get("trade_resolutions") or {}).get(r.get("key"), "") or "")
+        can_resolve = (not res["resolved"]) and (rem_shares > 1e-6 or pnl is None)
         resolve_hint_html = ""
-        if needs_resolve:
+        if can_resolve:
             _hint = t("결과 미확정 · 아래 버튼으로 승/패 확정",
                       "Unresolved · use the buttons below to mark Won/Lost")
             if r.get("combo"):
                 _hint = t("콤보는 자동 확정 불가 · 아래 버튼으로 승/패 확정",
                           "Combos can't auto-resolve · use the buttons below")
+            elif pnl is None:
+                _hint = t("손익 확인 필요 · 아래 버튼으로 승/패 확정",
+                          "P&L needs review · use the buttons below to mark Won/Lost")
             resolve_hint_html = f'<div style="margin-top:6px;"><span class="state w">{_hint}</span></div>'
         rid = make_review_id_from_trade_group(r, source)
         csel, cbody = st.columns([0.28, 3.72])
@@ -501,9 +387,9 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
 </div>'''),
                 unsafe_allow_html=True,
             )
-            # 미확정 보유분: 카드에서 바로 원클릭 승/패 확정 (체크박스 열 필요 없음).
+            # 미확정 거래: 카드에서 바로 원클릭 승/패 확정 (체크박스 열 필요 없음).
             # 폴리마켓 API가 진 콤보의 손실을 안 주므로, 손실인데 '보유 중 $0'으로 뜨는 걸 여기서 즉시 확정.
-            if needs_resolve and not open_flag:
+            if can_resolve and not open_flag:
                 _q1, _q2, _q3 = st.columns([1.1, 1.1, 2.6])
                 _qkey = r.get("key")
                 with _q1:
@@ -521,7 +407,24 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
                         save_local_state()
                         st.rerun()
                 with _q3:
-                    st.markdown(f'<div class="footnote" style="padding-top:8px;">{t(f"패 = −{money(rem_cost)} 반영", f"Lost = −{money(rem_cost)}")}</div>', unsafe_allow_html=True)
+                    if rem_shares > 1e-6:
+                        _qnote = t(f"패 = −{money(rem_cost)} 반영", f"Lost = −{money(rem_cost)}")
+                    else:
+                        _qnote = t("회수금−매수금 기준으로 확정합니다", "Resolves using recovered − cost")
+                    st.markdown(f'<div class="footnote" style="padding-top:8px;">{_qnote}</div>', unsafe_allow_html=True)
+            # 이미 수동/자동 확정된 거래: 잘못 눌렀을 때 되돌리는 원클릭 취소.
+            elif manual_mark and not open_flag:
+                _u1, _u2 = st.columns([1.1, 2.9])
+                with _u1:
+                    if st.button(t("확정 취소", "Undo mark"), key=f"quick_undo_{key_prefix}_{idx}", width="stretch"):
+                        _rm = dict(st.session_state.get("trade_resolutions") or {})
+                        _rm.pop(r.get("key"), None)
+                        st.session_state.trade_resolutions = _rm
+                        save_local_state()
+                        st.rerun()
+                with _u2:
+                    _mark_word = t("승", "Won") if manual_mark == "won" else t("패", "Lost")
+                    st.markdown(f'<div class="footnote" style="padding-top:8px;">{t(f"{_mark_word}(수동/자동 확정)을 취소하고 자동 판정으로 되돌립니다", f"Clears the {_mark_word} mark and returns to auto")}</div>', unsafe_allow_html=True)
             if open_flag:
                 # 체크하면 그 거래 카드 바로 밑에 손익 계산 박스가 인라인으로 뜬다 (스크롤/하단버튼 불필요).
                 buy_cost = float(r.get("buy_cost", 0) or 0)
@@ -558,7 +461,7 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
 </div>'''),
                     unsafe_allow_html=True,
                 )
-                if rem_shares > 1e-6:
+                if rem_shares > 1e-6 or pnl is None or manual_mark:
                     _opts = ["", "won", "lost"]
                     _lbl = {"": t("자동", "Auto"), "won": t("승(상환)", "Won"), "lost": t("패(소멸)", "Lost")}
                     _cur = str((st.session_state.get("trade_resolutions") or {}).get(r.get("key"), "") or "")
@@ -1502,38 +1405,6 @@ def _selected_entry_form(entry_category, entry_subcategory):
         if st.session_state.get("watching_market", {}).get("token_id"):
             st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{t("실시간 가격 추적", "Live price watch")}</div>', unsafe_allow_html=True)
             render_live_price_panel(st.session_state.watching_market)
-        if st.button(t("AI 분석 탭으로 보내기", "Send to AI tab"), key=f"toai_{keytok}", width="stretch"):
-            r = st.session_state.last_entry
-            saved_strategy = st.session_state.get("entry_self_strategy", {}).get(keytok, {})
-            memo_for_ai = str(saved_strategy.get("ai_memo", "") or "")
-            bk_for_ai = str(saved_strategy.get("bookmaker_memo", "") or "")
-            strategy_for_ai = _strategy_context_text(saved_strategy)
-            if strategy_for_ai:
-                memo_for_ai = (memo_for_ai + "\n\n" + strategy_for_ai).strip()
-            st.session_state.ai_pending = {
-                "market": sel.get(mk, ""),
-                "outcome": sel.get(oc, ""),
-                "token_id": tok,
-                "market_class": sel.get("market_class", ""),
-                "current_price": r.get("current_price", disp),
-                "fair_price": r.get("fair_price", disp),
-                "edge": r.get("edge", 0.0),
-                "category": entry_category,
-                "subcategory": entry_subcategory,
-                "bookmaker_prob": float(saved_strategy.get("bookmaker_prob", 0.0) or 0.0),
-                "bookmaker_memo": bk_for_ai,
-                "ai_memo": memo_for_ai,
-                "self_strategy": saved_strategy,
-                "resolution": str(sel.get("resolution", "") or ""),
-                "end_date": str(sel.get("endDate", "") or ""),
-                "source_url": st.session_state.get("entry_url", ""),
-            }
-            st.session_state._ai_memo_cache = memo_for_ai
-            st.session_state._ai_bk_cache = bk_for_ai
-            st.session_state.ai_text = ""
-            st.session_state.ai_error = ""
-            st.session_state.ai_last_market_key = ""
-            st.success(t("AI 리서치 탭에서 리포트를 생성하세요", "Generate the report in the AI research tab"))
 
 
 def sync_wallet(addr, limit=1000, force=False):
@@ -1764,7 +1635,6 @@ def render_tab_review():
 
 
 __all__ = [
-    '_ai_plain_fallback',
     '_market_table',
     '_on_trade_date_change',
     '_on_trade_qf_change',
@@ -1772,8 +1642,6 @@ __all__ = [
     'market_card_html',
     'portfolio_card_html',
     'portfolio_side_panel_html',
-    'render_ai',
-    'render_ai_report_json',
     'render_entry_result',
     'render_live_price_panel',
     'render_behavior_insights',

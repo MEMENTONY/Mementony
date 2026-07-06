@@ -808,7 +808,10 @@ def normalize_activity_events(raw):
             continue
         typ = str(it.get("type") or it.get("activityType") or it.get("eventType") or "").upper()
         side = str(it.get("side") or "").upper()
-        blob = " ".join(str(it.get(k, "")) for k in ("type", "activityType", "eventType", "title", "slug", "eventSlug", "outcome", "status", "result")).lower()
+        # 이벤트 판정은 타입/상태 필드로만 한다. 예전엔 title/slug/outcome까지 훑어서
+        # "… Game 3 Winner" 같은 시장 제목의 win/loss 단어 때문에 SPLIT·MERGE·CONVERSION 같은
+        # 일반 활동이 정산 이벤트로 오인돼 손익에 잘못 연결되는 버그가 있었다.
+        blob = " ".join(str(it.get(k, "")) for k in ("type", "activityType", "eventType", "status", "result", "label", "action")).lower()
         is_event = (
             side not in ("BUY", "SELL")
             and any(k in blob for k in ("redeem", "redemption", "settle", "settled", "claim", "claimed", "loss", "lost", "won", "win", "profit"))

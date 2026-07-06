@@ -1064,7 +1064,11 @@ def resolve_trade_row(r):
     rem = _display_remaining_shares(r)
     rem_cost = _display_remaining_cost(r)
     cur = _display_realized(r)
-    cur = cur if cur is not None else 0.0
+    if cur is None:
+        # '확인 필요(매도>매수)' 같은 미계산 행도 수동 승/패 확정은 가능해야 한다 —
+        # 회수금(매도+정산) − 총 매수금을 기준값으로 사용해 확정 손익을 계산한다.
+        cur = (safe_trade_float(r.get("adjusted_effective_proceeds", r.get("sell_proceeds", 0)), 0.0)
+               - safe_trade_float(r.get("buy_cost", 0), 0.0))
     try:
         mark = str((st.session_state.get("trade_resolutions") or {}).get(r.get("key"), "") or "")
     except Exception:
