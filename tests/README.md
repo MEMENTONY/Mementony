@@ -22,6 +22,7 @@ for f in tests/test_*.py; do python "$f" || break; done
 | `test_gsheet.py` | 장부 내보내기(키·감정 병합)·지문·webapp 백업·시트→앱 가져오기·수동 카테고리 보존·변경감지 자동백업 |
 | `test_statebackup.py` | 전체 상태 스냅샷/서명/백업·복원 왕복, 재배포 시나리오 부팅 자동 복원, 상태 자동백업 |
 | `test_rulesim.py` | 규칙 시뮬레이터 — 중단/추격 표시, 규칙별·결합 counterfactual, 일별 누적 |
+| `test_journal_fixes.py` | 거래 카드 HTML 노출 방지(html_block·빈 줄/4칸 들여쓰기 금지), 활동 페이지네이션(offset·상한), 자가치유 중복제거(유실 재인식·레거시 내용 지문) |
 
 `seed_state.py`는 시드 헬퍼(테스트가 각자 호출). 테스트가 리포 루트의 `memento_state.json`을 덮어쓰므로(gitignore됨) 실데이터가 있는 환경에서는 백업 후 실행할 것.
 

@@ -91,6 +91,13 @@ def grade_word(kind):
 def esc(v):
     return html.escape(str(v or ""), quote=True)
 
+def html_block(s):
+    """st.markdown(unsafe_allow_html=True)에 넘길 멀티라인 HTML 정리.
+    마크다운은 공백뿐인 줄에서 HTML 블록을 끝내고, 그다음에 오는 4칸 이상 들여쓴 줄을
+    코드블록으로 렌더링한다 — 카드 안에 <div ...> 태그가 글자 그대로 노출되던 원인.
+    각 줄의 들여쓰기를 걷어내고 빈 줄을 제거해 어떤 값이 끼어도 HTML로만 렌더링되게 한다."""
+    return "\n".join(ln.strip() for ln in str(s or "").splitlines() if ln.strip())
+
 _PILL_PALETTE = ("blue", "green", "red", "amber", "purple", "teal")
 
 def outcome_pill(name):
@@ -126,6 +133,7 @@ __all__ = [
     'cents_pill',
     'clamp',
     'esc',
+    'html_block',
     'outcome_pill',
     'grade_word',
     'line',

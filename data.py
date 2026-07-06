@@ -682,6 +682,26 @@ def fetch_wallet_activity(addr, limit=100, offset=0):
     with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read().decode("utf-8"))
 
+ACTIVITY_PAGE_SIZE = 500  # data-api /activity의 요청당 최대치
+
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_wallet_activity_all(addr, max_rows=1000):
+    """활동내역을 offset 페이지네이션으로 max_rows까지 전부 수집한다.
+    예전에는 최근 1페이지(최대 300건)만 가져와서, 그보다 오래된 '기존 거래'가
+    거래일지에 영영 인식되지 않았다. 페이지가 짧게 오면(마지막 페이지) 멈춘다."""
+    out, offset = [], 0
+    max_rows = max(int(max_rows or ACTIVITY_PAGE_SIZE), 1)
+    while offset < max_rows:
+        n = min(ACTIVITY_PAGE_SIZE, max_rows - offset)
+        batch = fetch_wallet_activity(addr, limit=n, offset=offset)
+        if not isinstance(batch, list) or not batch:
+            break
+        out.extend(batch)
+        if len(batch) < n:
+            break
+        offset += n
+    return out
+
 def _activity_time_value(it):
     if not isinstance(it, dict):
         return None
@@ -823,20 +843,41 @@ def normalize_activity_events(raw):
         })
     return events
 
+def _trade_content_sig(tr):
+    """tx_id가 없거나 형식이 바뀐 옛 행도 같은 체결로 알아보는 내용 지문."""
+    return "|".join([
+        str(tr.get("d", "")), str(tr.get("name", "")), str(tr.get("outcome", "")),
+        str(tr.get("side", "")).upper(),
+        f"{_safe_float(tr.get('shares'), 0):.4f}", f"{_safe_float(tr.get('price'), 0):.2f}",
+        f"{_safe_float(tr.get('amount'), 0):.2f}",
+    ])
+
 def merge_activity_into_log(items):
-    """Merge API trades into auto_trades without duplicating existing rows."""
-    if not isinstance(st.session_state.imported_tx_ids, list):
-        st.session_state.imported_tx_ids = []
-    seen = set(st.session_state.imported_tx_ids)
+    """Merge API trades into auto_trades without duplicating existing rows.
+
+    중복 판정은 '지금 실제로 존재하는' auto_trades 행 기준이다. 예전처럼 imported_tx_ids
+    목록에만 의존하면, 목록만 남고 거래 행이 유실된 경우(부분 복원·초기화 꼬임 등)
+    기존 거래가 다시는 인식되지 않는 버그가 있었다. tx_id가 없는 옛 행은 내용 지문으로
+    중복을 막는다. imported_tx_ids는 하위호환용 미러로 계속 채워 둔다."""
+    trades = st.session_state.get("auto_trades")
+    if not isinstance(trades, list):
+        trades = []
+    st.session_state.auto_trades = trades
+    seen_tx = {str(tr.get("tx_id")) for tr in trades if isinstance(tr, dict) and tr.get("tx_id")}
+    legacy_sigs = {_trade_content_sig(tr) for tr in trades if isinstance(tr, dict) and not tr.get("tx_id")}
     added = 0
     for it in items:
-        tx = it.get("tx_id") or ""
-        if not tx or tx in seen:
+        tx = str(it.get("tx_id") or "")
+        if tx and tx in seen_tx:
             continue
-        st.session_state.auto_trades.append(it)
-        st.session_state.imported_tx_ids.append(tx)
-        seen.add(tx)
+        if not tx or legacy_sigs:
+            if _trade_content_sig(it) in legacy_sigs:
+                continue
+        trades.append(it)
+        if tx:
+            seen_tx.add(tx)
         added += 1
+    st.session_state.imported_tx_ids = sorted(seen_tx)
     return added
 
 def summarize_activity(items):
@@ -1762,6 +1803,9 @@ __all__ = [
     'fetch_live_token_price',
     'fetch_price_history',
     'fetch_wallet_activity',
+    'fetch_wallet_activity_all',
+    'ACTIVITY_PAGE_SIZE',
+    '_trade_content_sig',
     'fetch_wallet_positions',
     'fetch_wallet_value',
     'get_api_key',

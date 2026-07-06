@@ -294,7 +294,7 @@ def market_card_html(row, clob=None, book=None, hist=None, cand=None):
     resolution = str(row.get("resolution", "") or "")[:180]
     cand_note = cand.get("note", "")
     cand_kind = cand.get("kind", "i")
-    return f"""<div class=\"market-card\">
+    return html_block(f"""<div class=\"market-card\">
   <div class=\"market-head\">
     <div>
       <div class=\"market-title\">{_escape(name)}</div>
@@ -314,7 +314,7 @@ def market_card_html(row, clob=None, book=None, hist=None, cand=None):
   </div>
   <div class=\"market-note\"><b>{t('주문 후보', 'Order candidate')}</b> · <span class=\"state {cand_kind}\">{_escape(cand_note)}</span> · {t('실제 주문은 원본 Polymarket에서 확인하세요.', 'Confirm actual orders on Polymarket.')}</div>
   <div class=\"market-note\"><b>{t('만기/해결 기준', 'End / resolution')}</b> · {_escape(end_date or '—')} · {_escape(resolution or t('데이터 없음/직접 확인 필요', 'No data / verify manually'))}</div>
-</div>"""
+</div>""")
 
 def render_profile_pnl_dashboard(pnl):
     kind = pnl.get("status_kind", "i")
@@ -340,7 +340,7 @@ def render_profile_pnl_dashboard(pnl):
   </div>
   <div class='sub' style='margin-top:14px;'>{t('Polymarket 프로필 화면과 소액 차이가 날 수 있습니다. 출금·입금·정산·dust 포지션은 보정값과 API 필드에 따라 달라집니다.', 'This can differ slightly from the Polymarket profile due to withdrawals, deposits, settlements and dust positions.')}</div>
 </div>"""
-    st.markdown(html, unsafe_allow_html=True)
+    st.markdown(html_block(html), unsafe_allow_html=True)
 
 def _on_trade_qf_change():
     # Radio uses internal code values, not translated labels.
@@ -474,8 +474,10 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
             )
         with cbody:
             _pnl_color = "#9aa0aa" if pnl is None else ("#16a34a" if pnl >= 0 else "#dc2626")
+            # html_block 필수: {resolve_hint_html}가 빈 값이면 공백 줄이 생기고, 마크다운이 거기서
+            # HTML 블록을 끝낸 뒤 4칸 들여쓴 아래 줄들을 코드블록으로 노출한다 (카드에 태그가 글자로 보이던 버그).
             st.markdown(
-                f'''<div class="pf-card" style="margin:10px 0;">
+                html_block(f'''<div class="pf-card" style="margin:10px 0;">
   <div class="pf-card-head">
     <div>
       <div class="pf-title">{esc(r.get("market"))}</div>
@@ -496,7 +498,7 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
     <div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining exposure")}</div><div class="v">{rem_shares:.2f} · {money(rem_cost)}</div></div>
   </div>
   <div class="pf-note">{esc(" · ".join(note_parts))}</div>
-</div>''',
+</div>'''),
                 unsafe_allow_html=True,
             )
             # 미확정 보유분: 카드에서 바로 원클릭 승/패 확정 (체크박스 열 필요 없음).
@@ -546,14 +548,14 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
                     for _k, _v in calc_lines
                 )
                 st.markdown(
-                    f'''<div style="margin:2px 0 8px 0;padding:12px 14px;border:1px solid rgba(2,6,23,.08);border-radius:14px;background:rgba(255,255,255,.66);">
+                    html_block(f'''<div style="margin:2px 0 8px 0;padding:12px 14px;border:1px solid rgba(2,6,23,.08);border-radius:14px;background:rgba(255,255,255,.66);">
   <div style="font-size:11px;font-weight:700;letter-spacing:.03em;color:#9aa0aa;margin-bottom:6px;">{t("손익 계산", "P&L BREAKDOWN")}</div>
   {_rows_html}
   <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid rgba(2,6,23,.07);">
     <span style="font-size:13px;font-weight:700;color:#374151;">{t("실현손익", "Realized P&L")}</span>
     <span style="font-size:20px;font-weight:800;color:{_pnl_color};font-variant-numeric:tabular-nums;">{_final_txt}</span>
   </div>
-</div>''',
+</div>'''),
                     unsafe_allow_html=True,
                 )
                 if rem_shares > 1e-6:
@@ -882,7 +884,7 @@ def render_trade_event_cards(events, title=None):
 
 def portfolio_card_html(ar):
     pnl_cls = "pos" if ar.get("pnl", 0) >= 0 else "neg"
-    return f'''<div class="pf-card">
+    return html_block(f'''<div class="pf-card">
   <div class="pf-card-head">
     <div>
       <div class="pf-title">{esc(ar.get("name"))}</div>
@@ -901,7 +903,7 @@ def portfolio_card_html(ar):
     <div class="pf-metric"><div class="k">{t("매수 횟수", "Buys")}</div><div class="v">{int(ar.get("buy_trades", 0))}회</div></div>
   </div>
   <div class="pf-note">{esc(ar.get("summary"))}<br><b>{t("거래 연결", "Trade link")}:</b> {esc(ar.get("match_note", t("자동 거래내역 없음", "No imported activity")))}</div>
-</div>'''
+</div>''')
 
 def sync_portfolio_hidden_checkbox(pkey, cb_key):
     hidden = set(str(x) for x in st.session_state.get("portfolio_hidden_keys", []) or [])
@@ -1534,7 +1536,7 @@ def _selected_entry_form(entry_category, entry_subcategory):
             st.success(t("AI 리서치 탭에서 리포트를 생성하세요", "Generate the report in the AI research tab"))
 
 
-def sync_wallet(addr, limit=100, force=False):
+def sync_wallet(addr, limit=1000, force=False):
     """Fetch wallet activity, merge new trades (dedup by tx_id), archive completed trades
     to the durable ledger, and record sync meta. Shared by the manual button and the
     once-per-session auto-sync. Returns a result dict; never raises."""
@@ -1544,7 +1546,10 @@ def sync_wallet(addr, limit=100, force=False):
     try:
         if force:
             fetch_wallet_activity.clear()
-        raw = fetch_wallet_activity(a, limit=int(limit or 100))
+            fetch_wallet_activity_all.clear()
+        # 페이지네이션으로 limit(총 상한)까지 과거 체결을 전부 수집 — 최근 1페이지만 보던
+        # 예전 방식에선 오래된 기존 거래가 인식되지 않았다.
+        raw = fetch_wallet_activity_all(a, max_rows=int(limit or 500))
         st.session_state.activity_raw = raw
         st.session_state.activity_events = normalize_activity_events(raw)
         items = sort_trades_newest_first(normalize_activity(raw))
@@ -1570,7 +1575,7 @@ def sync_wallet(addr, limit=100, force=False):
         return {"ok": False, "error": str(e), "added": 0, "found": 0}
 
 
-def sync_wallet_full(addr, limit=200, force=False, resolve=True):
+def sync_wallet_full(addr, limit=1000, force=False, resolve=True):
     """지갑 동기화 단일 파이프라인: 보유 포지션 + 지갑 가치 + 활동내역(→장부) + 승/패 자동확정.
     포트폴리오/거래일지 버튼과 부팅 자동 동기화가 전부 이 함수를 쓴다. 포지션 조회가 실패해도
     활동내역 동기화는 계속한다(부분 성공은 partial에 기록). Never raises."""
@@ -1677,7 +1682,7 @@ def render_tab_review():
             pnl_text = t("확인 필요", "Verify") if pnl is None else signed_money(safe_trade_float(pnl, 0.0))
             pnl_cls = "i" if pnl is None else ("pos" if safe_trade_float(pnl, 0.0) >= 0 else "neg")
             st.markdown(
-                f'''<div class="pf-card" style="margin:14px 0;">
+                html_block(f'''<div class="pf-card" style="margin:14px 0;">
   <div class="pf-card-head">
     <div>
       <div class="pf-title">{esc(item.get("market"))}</div>
@@ -1692,7 +1697,7 @@ def render_tab_review():
     <div class="pf-metric"><div class="k">{t("실현손익(추정)", "Realized est.")}</div><div class="v {pnl_cls}">{pnl_text}</div></div>
     <div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining")}</div><div class="v">{safe_trade_float(item.get("remaining_shares"), 0):.2f} · {money(safe_trade_float(item.get("remaining_cost"), 0))}</div></div>
   </div>
-</div>''',
+</div>'''),
                 unsafe_allow_html=True,
             )
             with st.expander(t("복기 작성", "Write review"), expanded=False):

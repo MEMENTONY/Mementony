@@ -938,7 +938,7 @@ try:
         st.session_state._wallet_autosynced = True
         _wa = str(st.session_state.get("wallet_addr", "") or "").strip()
         if _wa.startswith("0x") and len(_wa) == 42:
-            _auto = sync_wallet_full(_wa, limit=200, force=False)
+            _auto = sync_wallet_full(_wa, limit=1000, force=False)
             if _auto.get("ok") and (_auto.get("added") or _auto.get("resolved_won") or _auto.get("resolved_lost")):
                 _parts = []
                 if _auto.get("added"):
@@ -1921,11 +1921,44 @@ with tab4:
         # 구글시트 백업과 같은 포맷(키·감정·추격 포함) — 내부 계산용 필드는 제외됨
         _lbody, _ln = _ledger_rows_for_export()
         _ldf = pd.DataFrame(_lbody[1:], columns=_lbody[0])
-        st.download_button(
-            t("📒 거래장부 전체 다운로드 (CSV)", "📒 Download full trade ledger (CSV)"),
-            data=_ldf.to_csv(index=False).encode("utf-8-sig"),
-            file_name="memento_trade_ledger.csv", mime="text/csv",
-            width="stretch", key="ledger_download_btn")
+        _jc1, _jc2 = st.columns(2)
+        with _jc1:
+            st.download_button(
+                t("📒 거래장부 전체 다운로드 (CSV)", "📒 Download full trade ledger (CSV)"),
+                data=_ldf.to_csv(index=False).encode("utf-8-sig"),
+                file_name="memento_trade_ledger.csv", mime="text/csv",
+                width="stretch", key="ledger_download_btn")
+        with _jc2:
+            # 구글시트 원클릭 저장 — 설정 탭까지 안 가도 여기서 바로 장부를 시트로 보낸다.
+            if gsheet_active_method():
+                if st.button(t("📤 구글시트에 지금 저장", "📤 Save to Google Sheets now"),
+                             width="stretch", key="ledger_gsheet_quick_btn"):
+                    _jb = backup_ledger(force=True)
+                    if _jb.get("ok"):
+                        st.toast(t(f"구글시트 저장 완료 · {_jb.get('written', _ln)}건",
+                                   f"Saved to Google Sheets · {_jb.get('written', _ln)} rows"))
+                    else:
+                        st.markdown(line(t(f"시트 저장 실패 — {_jb.get('error', '')} (설정 탭에서 연결 상태를 확인하세요)",
+                                           f"Sheet save failed — {_jb.get('error', '')} (check the connection in Settings)"), "b"), unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="footnote" style="padding-top:10px;">{t("설정 탭에서 Apps Script URL을 한 번만 넣으면 여기서 원클릭 저장 + 자동 백업이 됩니다.", "Add the Apps Script URL once in Settings to enable one-click save + auto-backup here.")}</div>', unsafe_allow_html=True)
+        _gs_last = str(st.session_state.get("_gsheet_last_backup", "") or "")
+        if gsheet_active_method():
+            if st.session_state.get("gsheet_autobackup"):
+                _ab_note = t("시트 자동 백업 켜짐 — 장부가 바뀔 때마다 알아서 저장됩니다",
+                             "Sheet auto-backup ON — saves automatically whenever the ledger changes")
+                if _gs_last:
+                    _ab_note += t(f" · 마지막 저장 {_gs_last}", f" · last saved {_gs_last}")
+                st.markdown(f'<div class="footnote">{_ab_note}</div>', unsafe_allow_html=True)
+            else:
+                _abc1, _abc2 = st.columns([2.6, 1.4])
+                with _abc1:
+                    st.markdown(f'<div class="footnote" style="padding-top:10px;">{t("시트 자동 백업이 꺼져 있어요 — 켜면 저장 버튼을 누를 필요가 없습니다.", "Sheet auto-backup is OFF — turn it on and you never need the save button.")}</div>', unsafe_allow_html=True)
+                with _abc2:
+                    if st.button(t("자동 백업 켜기", "Turn on auto-backup"), width="stretch", key="ledger_autobackup_on_btn"):
+                        st.session_state.gsheet_autobackup = True
+                        save_local_state()
+                        st.rerun()
     render_performance_summary()
     # 자산 곡선 + 일별 손익 캘린더 — 추세와 '폭발한 날'을 한눈에.
     render_equity_section()
@@ -1947,7 +1980,7 @@ with tab4:
         st.markdown(f'<div class="eyebrow">{t("폴리마켓 지갑 조회", "Polymarket wallet lookup")}</div>', unsafe_allow_html=True)
         st.markdown(
             f'<div class="footnote" style="margin:0 0 10px 0;">'
-            f'{t("지갑 주소 기준으로 최근 체결내역을 불러오고 최신 거래가 위에 오도록 정리합니다.", "Import recent wallet activity and display newest trades first.")}'
+            f'{t("지갑 주소 기준으로 과거 체결까지 페이지를 넘겨가며 불러오고 최신 거래가 위에 오도록 정리합니다.", "Import wallet activity (paging back through older fills) and display newest trades first.")}'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -1960,7 +1993,11 @@ with tab4:
                 key="activity_wallet_addr",
             )
         with ac2:
-            act_limit = st.number_input(t("불러올 개수", "Limit"), 10, 300, 100, step=10, key="activity_import_limit")
+            act_limit = st.number_input(
+                t("불러올 개수(과거 포함)", "Limit (incl. history)"), 10, 3000, 1000, step=100,
+                key="activity_import_limit",
+                help=t("이 개수만큼 과거로 페이지를 넘겨가며 가져옵니다. 오래된 거래가 안 보이면 늘리세요.",
+                       "Pages back through history up to this many rows. Increase if old trades are missing."))
 
         if st.button(t("거래내역 불러오기 (강제 새로고침)", "Import trades (force refresh)"), width="stretch", key="activity_import_btn"):
             with st.spinner(t("거래내역 불러오는 중", "Fetching activity")):
@@ -2270,7 +2307,7 @@ with tab_pf:
         if st.button(t("보유 포지션 불러오기", "Import open positions"), width="stretch"):
             # 거래일지 버튼·부팅 자동 동기화와 같은 단일 파이프라인(sync_wallet_full)을 쓴다.
             with st.spinner(t("폴리마켓에서 불러오는 중", "Fetching")):
-                _pf_res = sync_wallet_full(st.session_state.wallet_addr, limit=200, force=True)
+                _pf_res = sync_wallet_full(st.session_state.wallet_addr, limit=1000, force=True)
             if _pf_res["ok"]:
                 _pf_msg = t(f"현재 보유 포지션 {_pf_res['positions']}개", f"{_pf_res['positions']} open positions")
                 if _pf_res.get("resolved_won") or _pf_res.get("resolved_lost"):
@@ -2659,7 +2696,7 @@ gsheet_webapp_url = "https://script.google.com/macros/s/..../exec"
 
     st.session_state.gsheet_autobackup = st.checkbox(
         t("자동 백업 (장부가 바뀔 때마다)", "Auto-backup (whenever the ledger changes)"),
-        value=bool(st.session_state.get("gsheet_autobackup", False)),
+        value=bool(st.session_state.get("gsheet_autobackup", True)),
         help=t("켜두면 승/패 확정·감정 태그·새 거래로 장부 내용이 바뀔 때마다 자동으로 시트에 저장됩니다.",
                "When on, every ledger change (resolutions, emotion tags, new trades) is backed up automatically."),
     )

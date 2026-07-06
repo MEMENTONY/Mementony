@@ -109,7 +109,8 @@ DEFAULTS = {
     "insight_stop_streak": 2,
     "state_backup_last_at": "",
     "gsheet_url": "",
-    "gsheet_autobackup": False,
+    # 시트가 연결돼 있으면 장부·상태를 알아서 백업하는 게 기본 — 버튼 누르러 다닐 필요 없게.
+    "gsheet_autobackup": True,
     "gsheet_webapp_url": "",
     "gsheet_webapp_token": "",
 }
