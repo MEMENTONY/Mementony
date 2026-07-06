@@ -129,4 +129,43 @@ rows2, meta2 = d.parse_pasted_activity(PASTE2)
 assert meta2["ok"] == 1, meta2
 assert rows2[0]["name"] == "예측 2개 콤보 — Over 1.5 goals, 무승부", rows2[0]["name"]
 print("6) 두 줄 제목 병합 OK")
+
+# ---------- 7) 콤보 보유 포지션(매도·정산 없음) 수동 '패' 확정 = -원가 ----------
+held = [{"tx_id": "h1", "d": "2026-07-05T05:59:00+09:00",
+         "name": "Paraguay vs. France: O/U 1.5 AND Will France win", "outcome": "Yes",
+         "side": "BUY", "price": 77.9, "shares": 787.09, "amount": 613.0,
+         "asset": "COMBO_nonnumeric", "token_id": "COMBO_nonnumeric", "combo": True}]
+hg = eng.group_auto_trades_for_pnl(held)[0]
+assert hg["status"] == "보유 중" and hg["remaining_shares"] == 787.09, hg
+st.session_state.trade_resolutions = {}
+assert eng.resolve_trade_row(hg)["realized_final"] == 0.0            # 미확정 → $0
+st.session_state.trade_resolutions = {hg["key"]: "lost"}
+resh = eng.resolve_trade_row(hg)
+assert resh["realized_final"] == -613.0 and resh["remaining_final"] == 0.0, resh
+# 콤보 held는 auto_resolve 대상이 아님(비숫자 토큰)
+st.session_state.auto_trades = held
+st.session_state.paste_trades = []
+st.session_state.trade_resolutions = {}
+ar = d.auto_resolve_trades()
+assert ar["ok"] and ar["checked"] == 0, ar                          # 조회 대상 0 (콤보 토큰 제외)
+print("7) 콤보 보유분 수동 패 확정 OK")
+
+# ---------- 8) AppTest: 미확정 보유 포지션에 '승/패 확정 필요' 힌트 노출 ----------
+seed()
+import json as _json
+_state = _json.load(open("memento_state.json", encoding="utf-8"))
+_state["auto_trades"] = held
+_state["paste_trades"] = []
+_state["activity_events"] = []
+_state["trade_resolutions"] = {}
+_state["wallet_addr"] = "0x1234567890abcdef1234567890abcdef12345678"
+_state["auto_sync_on_boot"] = False
+with open("memento_state.json", "w", encoding="utf-8") as f:
+    _json.dump(_state, f, ensure_ascii=False)
+from streamlit.testing.v1 import AppTest
+at = AppTest.from_file("streamlit_app.py", default_timeout=180).run()
+assert not at.exception, f"EXCEPTION: {at.exception}"
+all_md = "\n".join(m.value for m in at.markdown)
+assert "콤보는 자동 확정 불가" in all_md, "combo resolve hint missing"
+print("8) 미확정 보유 힌트 노출 OK")
 print("ALL COMBO TESTS PASSED")
