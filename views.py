@@ -453,6 +453,17 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
                 note_parts.append(f'{float(r.get("linked_event_shares")):.2f} {t("주", "shares")}')
             if r.get("linked_event_amount") is not None:
                 note_parts.append(money(float(r.get("linked_event_amount"))))
+        # 미확정 보유 포지션 힌트: 매도·정산이 없어 결과가 안 정해진 거래는 수동 승/패 확정이 필요하다.
+        # (콤보/팔레이는 자동 확정이 불가능하므로 특히 안내) — 왼쪽 체크박스를 켜면 확정 라디오가 나온다.
+        needs_resolve = (not res["resolved"]) and (not r.get("_adjusted")) and rem_shares > 1e-6 and closed_shares <= 1e-6
+        resolve_hint_html = ""
+        if needs_resolve:
+            _hint = t("결과 미확정 · 왼쪽 ☑를 켜고 승/패 확정",
+                      "Unresolved · tick the left box to mark Won/Lost")
+            if r.get("combo"):
+                _hint = t("콤보는 자동 확정 불가 · 왼쪽 ☑ 켜고 승/패 확정",
+                          "Combos can't auto-resolve · tick the left box to mark Won/Lost")
+            resolve_hint_html = f'<div style="margin-top:6px;"><span class="state w">{_hint}</span></div>'
         rid = make_review_id_from_trade_group(r, source)
         csel, cbody = st.columns([0.28, 3.72])
         with csel:
@@ -470,6 +481,7 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
       <div class="pf-title">{esc(r.get("market"))}</div>
       <div class="pf-pills">{outcome_pill(r.get("outcome"))}{"" if r.get("combo") else cents_pill(r.get("avg_buy_price", 0))}</div>
       <div class="pf-sub">{esc(latest)} · {esc(status_text)}</div>
+      {resolve_hint_html}
     </div>
     <div style="text-align:right;min-width:96px;">
       <div style="font-size:22px;font-weight:800;line-height:1.15;color:{_pnl_color};">{pnl_text}</div>
