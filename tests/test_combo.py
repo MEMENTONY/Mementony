@@ -167,5 +167,18 @@ at = AppTest.from_file("streamlit_app.py", default_timeout=180).run()
 assert not at.exception, f"EXCEPTION: {at.exception}"
 all_md = "\n".join(m.value for m in at.markdown)
 assert "콤보는 자동 확정 불가" in all_md, "combo resolve hint missing"
-print("8) 미확정 보유 힌트 노출 OK")
+# 원클릭 '패로 확정' 버튼이 카드에 노출됨
+btn_labels = [b.label for b in at.button]
+assert any("패로 확정" in x for x in btn_labels), btn_labels
+print("8) 미확정 보유 힌트 + 원클릭 버튼 노출 OK")
+
+# ---------- 9) 원클릭 '패로 확정' 클릭 → 장부에 -원가 반영 ----------
+_held_key = eng.group_auto_trades_for_pnl(held)[0]["key"]
+lost_btn = [b for b in at.button if "패로 확정" in b.label][0]
+lost_btn.click().run()
+assert not at.exception, f"EXCEPTION: {at.exception}"
+assert at.session_state["trade_resolutions"].get(_held_key) == "lost", at.session_state["trade_resolutions"]
+_led9 = at.session_state["trade_ledger"]
+assert _held_key in _led9 and abs(_led9[_held_key]["pnl"] - (-613.0)) < 0.01, _led9.get(_held_key)
+print("9) 원클릭 패 확정 → 장부 -613 OK")
 print("ALL COMBO TESTS PASSED")
