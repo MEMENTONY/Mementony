@@ -89,7 +89,9 @@ def grade_word(kind):
     return {"g": t("좋음", "Good"), "w": t("주의", "Caution"), "b": t("위험", "Risk"), "i": t("보통", "Neutral")}[kind]
 
 def esc(v):
-    return html.escape(str(v or ""), quote=True)
+    # Collapse newlines/tabs to spaces so interpolated data can never introduce a blank line
+    # that would break a single-line HTML block (Streamlit markdown renders such HTML as text).
+    return html.escape(re.sub(r"[\r\n\t]+", " ", str(v or "")), quote=True)
 
 _PILL_PALETTE = ("blue", "green", "red", "amber", "purple", "teal")
 
