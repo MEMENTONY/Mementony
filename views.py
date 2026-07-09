@@ -475,28 +475,28 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
         with cbody:
             _pnl_color = "#9aa0aa" if pnl is None else ("#16a34a" if pnl >= 0 else "#dc2626")
             st.markdown(
-                f'''<div class="pf-card" style="margin:10px 0;">
-  <div class="pf-card-head">
-    <div>
-      <div class="pf-title">{esc(r.get("market"))}</div>
-      <div class="pf-pills">{outcome_pill(r.get("outcome"))}{"" if r.get("combo") else cents_pill(r.get("avg_buy_price", 0))}</div>
-      <div class="pf-sub">{esc(latest)} · {esc(status_text)}</div>
-      {resolve_hint_html}
-    </div>
-    <div style="text-align:right;min-width:96px;">
-      <div style="font-size:22px;font-weight:800;line-height:1.15;color:{_pnl_color};">{pnl_text}</div>
-      <div class="pf-sub">{pnl_label}</div>
-    </div>
-  </div>
-  <div class="pf-metrics">
-    <div class="pf-metric"><div class="k">{t("평균 매수", "Avg buy")}</div><div class="v">{t("콤보", "Combo") if r.get("combo") else cents(r.get("avg_buy_price", 0))}</div></div>
-    <div class="pf-metric"><div class="k">{t("평균 청산", "Avg exit")}</div><div class="v">{cents(exit_price) if closed_shares > 0 else "—"}</div></div>
-    <div class="pf-metric"><div class="k">{t("매수/청산 수량", "Bought/Closed")}</div><div class="v">{r.get("bought_shares", 0):.2f} / {closed_shares:.2f}</div></div>
-    <div class="pf-metric"><div class="k">{t("매수금/회수금", "Cost/Recovered")}</div><div class="v">{money(r.get("buy_cost", 0))} / {money(r.get("adjusted_effective_proceeds", r.get("sell_proceeds", 0)))}</div></div>
-    <div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining exposure")}</div><div class="v">{rem_shares:.2f} · {money(rem_cost)}</div></div>
-  </div>
-  <div class="pf-note">{esc(" · ".join(note_parts))}</div>
-</div>''',
+                f'<div class="pf-card" style="margin:10px 0;">'
+                f'<div class="pf-card-head">'
+                f'<div>'
+                f'<div class="pf-title">{esc(r.get("market"))}</div>'
+                f'<div class="pf-pills">{outcome_pill(r.get("outcome"))}{"" if r.get("combo") else cents_pill(r.get("avg_buy_price", 0))}</div>'
+                f'<div class="pf-sub">{esc(latest)} · {esc(status_text)}</div>'
+                f'{resolve_hint_html}'
+                f'</div>'
+                f'<div style="text-align:right;min-width:96px;">'
+                f'<div style="font-size:22px;font-weight:800;line-height:1.15;color:{_pnl_color};">{pnl_text}</div>'
+                f'<div class="pf-sub">{pnl_label}</div>'
+                f'</div>'
+                f'</div>'
+                f'<div class="pf-metrics">'
+                f'<div class="pf-metric"><div class="k">{t("평균 매수", "Avg buy")}</div><div class="v">{t("콤보", "Combo") if r.get("combo") else cents(r.get("avg_buy_price", 0))}</div></div>'
+                f'<div class="pf-metric"><div class="k">{t("평균 청산", "Avg exit")}</div><div class="v">{cents(exit_price) if closed_shares > 0 else "—"}</div></div>'
+                f'<div class="pf-metric"><div class="k">{t("매수/청산 수량", "Bought/Closed")}</div><div class="v">{r.get("bought_shares", 0):.2f} / {closed_shares:.2f}</div></div>'
+                f'<div class="pf-metric"><div class="k">{t("매수금/회수금", "Cost/Recovered")}</div><div class="v">{money(r.get("buy_cost", 0))} / {money(r.get("adjusted_effective_proceeds", r.get("sell_proceeds", 0)))}</div></div>'
+                f'<div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining exposure")}</div><div class="v">{rem_shares:.2f} · {money(rem_cost)}</div></div>'
+                f'</div>'
+                f'<div class="pf-note">{esc(" · ".join(note_parts))}</div>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
             # 미확정 보유분: 카드에서 바로 원클릭 승/패 확정 (체크박스 열 필요 없음).
@@ -546,14 +546,14 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
                     for _k, _v in calc_lines
                 )
                 st.markdown(
-                    f'''<div style="margin:2px 0 8px 0;padding:12px 14px;border:1px solid rgba(2,6,23,.08);border-radius:14px;background:rgba(255,255,255,.66);">
-  <div style="font-size:11px;font-weight:700;letter-spacing:.03em;color:#9aa0aa;margin-bottom:6px;">{t("손익 계산", "P&L BREAKDOWN")}</div>
-  {_rows_html}
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid rgba(2,6,23,.07);">
-    <span style="font-size:13px;font-weight:700;color:#374151;">{t("실현손익", "Realized P&L")}</span>
-    <span style="font-size:20px;font-weight:800;color:{_pnl_color};font-variant-numeric:tabular-nums;">{_final_txt}</span>
-  </div>
-</div>''',
+                    f'<div style="margin:2px 0 8px 0;padding:12px 14px;border:1px solid rgba(2,6,23,.08);border-radius:14px;background:rgba(255,255,255,.66);">'
+                    f'<div style="font-size:11px;font-weight:700;letter-spacing:.03em;color:#9aa0aa;margin-bottom:6px;">{t("손익 계산", "P&L BREAKDOWN")}</div>'
+                    f'{_rows_html}'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid rgba(2,6,23,.07);">'
+                    f'<span style="font-size:13px;font-weight:700;color:#374151;">{t("실현손익", "Realized P&L")}</span>'
+                    f'<span style="font-size:20px;font-weight:800;color:{_pnl_color};font-variant-numeric:tabular-nums;">{_final_txt}</span>'
+                    f'</div>'
+                    f'</div>',
                     unsafe_allow_html=True,
                 )
                 if rem_shares > 1e-6:
@@ -1677,22 +1677,22 @@ def render_tab_review():
             pnl_text = t("확인 필요", "Verify") if pnl is None else signed_money(safe_trade_float(pnl, 0.0))
             pnl_cls = "i" if pnl is None else ("pos" if safe_trade_float(pnl, 0.0) >= 0 else "neg")
             st.markdown(
-                f'''<div class="pf-card" style="margin:14px 0;">
-  <div class="pf-card-head">
-    <div>
-      <div class="pf-title">{esc(item.get("market"))}</div>
-      <div class="pf-pills">{outcome_pill(item.get("outcome"))}{cents_pill(safe_trade_float(item.get("avg_buy_price"), 0))}</div>
-      <div class="pf-sub">{esc(item.get("status"))} · {esc(item.get("source", ""))}</div>
-    </div>
-    <span class="state i">{esc(item.get("latest_dt") or item.get("created_at", ""))}</span>
-  </div>
-  <div class="pf-metrics">
-    <div class="pf-metric"><div class="k">{t("평균 매수", "Avg buy")}</div><div class="v">{cents(safe_trade_float(item.get("avg_buy_price"), 0))}</div></div>
-    <div class="pf-metric"><div class="k">{t("평균 매도", "Avg sell")}</div><div class="v">{cents(safe_trade_float(item.get("avg_sell_price"), 0)) if safe_trade_float(item.get("sold_shares"), 0) > 0 else "—"}</div></div>
-    <div class="pf-metric"><div class="k">{t("실현손익(추정)", "Realized est.")}</div><div class="v {pnl_cls}">{pnl_text}</div></div>
-    <div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining")}</div><div class="v">{safe_trade_float(item.get("remaining_shares"), 0):.2f} · {money(safe_trade_float(item.get("remaining_cost"), 0))}</div></div>
-  </div>
-</div>''',
+                f'<div class="pf-card" style="margin:14px 0;">'
+                f'<div class="pf-card-head">'
+                f'<div>'
+                f'<div class="pf-title">{esc(item.get("market"))}</div>'
+                f'<div class="pf-pills">{outcome_pill(item.get("outcome"))}{cents_pill(safe_trade_float(item.get("avg_buy_price"), 0))}</div>'
+                f'<div class="pf-sub">{esc(item.get("status"))} · {esc(item.get("source", ""))}</div>'
+                f'</div>'
+                f'<span class="state i">{esc(item.get("latest_dt") or item.get("created_at", ""))}</span>'
+                f'</div>'
+                f'<div class="pf-metrics">'
+                f'<div class="pf-metric"><div class="k">{t("평균 매수", "Avg buy")}</div><div class="v">{cents(safe_trade_float(item.get("avg_buy_price"), 0))}</div></div>'
+                f'<div class="pf-metric"><div class="k">{t("평균 매도", "Avg sell")}</div><div class="v">{cents(safe_trade_float(item.get("avg_sell_price"), 0)) if safe_trade_float(item.get("sold_shares"), 0) > 0 else "—"}</div></div>'
+                f'<div class="pf-metric"><div class="k">{t("실현손익(추정)", "Realized est.")}</div><div class="v {pnl_cls}">{pnl_text}</div></div>'
+                f'<div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining")}</div><div class="v">{safe_trade_float(item.get("remaining_shares"), 0):.2f} · {money(safe_trade_float(item.get("remaining_cost"), 0))}</div></div>'
+                f'</div>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
             with st.expander(t("복기 작성", "Write review"), expanded=False):
