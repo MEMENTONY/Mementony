@@ -882,26 +882,28 @@ def render_trade_event_cards(events, title=None):
 
 def portfolio_card_html(ar):
     pnl_cls = "pos" if ar.get("pnl", 0) >= 0 else "neg"
-    return f'''<div class="pf-card">
-  <div class="pf-card-head">
-    <div>
-      <div class="pf-title">{esc(ar.get("name"))}</div>
-      <div class="pf-pills">{outcome_pill(ar.get("outcome"))}{cents_pill(ar.get("cur", 0))}</div>
-    </div>
-    <span class="state {ar.get("kind", "i")}">{esc(ar.get("title"))}</span>
-  </div>
-  <div class="pf-big {pnl_cls}">{signed_money(ar.get("pnl", 0))}</div>
-  <div class="pf-sub">{t("포지션 손익", "Position P&L")} · {signed_pct(ar.get("roi", 0))}</div>
-  <div class="pf-metrics">
-    <div class="pf-metric"><div class="k">{t("평가금", "Value")}</div><div class="v">{money(ar.get("value", 0))}</div></div>
-    <div class="pf-metric"><div class="k">{t("비중", "Weight")}</div><div class="v">{ar.get("pct", 0):.1f}%</div></div>
-    <div class="pf-metric"><div class="k">{t("현재가", "Now")}</div><div class="v">{ar.get("cur", 0):.1f}¢</div></div>
-    <div class="pf-metric"><div class="k">{t("평균가", "Avg")}</div><div class="v">{ar.get("buy", 0):.1f}¢</div></div>
-    <div class="pf-metric"><div class="k">{t("연결 거래", "Linked")}</div><div class="v">{int(ar.get("matched_trades", 0))}건</div></div>
-    <div class="pf-metric"><div class="k">{t("매수 횟수", "Buys")}</div><div class="v">{int(ar.get("buy_trades", 0))}회</div></div>
-  </div>
-  <div class="pf-note">{esc(ar.get("summary"))}<br><b>{t("거래 연결", "Trade link")}:</b> {esc(ar.get("match_note", t("자동 거래내역 없음", "No imported activity")))}</div>
-</div>'''
+    return (
+        f'<div class="pf-card">'
+        f'<div class="pf-card-head">'
+        f'<div>'
+        f'<div class="pf-title">{esc(ar.get("name"))}</div>'
+        f'<div class="pf-pills">{outcome_pill(ar.get("outcome"))}{cents_pill(ar.get("cur", 0))}</div>'
+        f'</div>'
+        f'<span class="state {ar.get("kind", "i")}">{esc(ar.get("title"))}</span>'
+        f'</div>'
+        f'<div class="pf-big {pnl_cls}">{signed_money(ar.get("pnl", 0))}</div>'
+        f'<div class="pf-sub">{t("포지션 손익", "Position P&L")} · {signed_pct(ar.get("roi", 0))}</div>'
+        f'<div class="pf-metrics">'
+        f'<div class="pf-metric"><div class="k">{t("평가금", "Value")}</div><div class="v">{money(ar.get("value", 0))}</div></div>'
+        f'<div class="pf-metric"><div class="k">{t("비중", "Weight")}</div><div class="v">{ar.get("pct", 0):.1f}%</div></div>'
+        f'<div class="pf-metric"><div class="k">{t("현재가", "Now")}</div><div class="v">{ar.get("cur", 0):.1f}¢</div></div>'
+        f'<div class="pf-metric"><div class="k">{t("평균가", "Avg")}</div><div class="v">{ar.get("buy", 0):.1f}¢</div></div>'
+        f'<div class="pf-metric"><div class="k">{t("연결 거래", "Linked")}</div><div class="v">{int(ar.get("matched_trades", 0))}건</div></div>'
+        f'<div class="pf-metric"><div class="k">{t("매수 횟수", "Buys")}</div><div class="v">{int(ar.get("buy_trades", 0))}회</div></div>'
+        f'</div>'
+        f'<div class="pf-note">{esc(ar.get("summary"))}<br><b>{t("거래 연결", "Trade link")}:</b> {esc(ar.get("match_note", t("자동 거래내역 없음", "No imported activity")))}</div>'
+        f'</div>'
+    )
 
 def sync_portfolio_hidden_checkbox(pkey, cb_key):
     hidden = set(str(x) for x in st.session_state.get("portfolio_hidden_keys", []) or [])
